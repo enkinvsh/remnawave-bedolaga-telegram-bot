@@ -19,6 +19,7 @@ from app.database.models import (
 )
 from app.services.partner_application_service import partner_application_service
 from app.services.partner_stats_service import PartnerStatsService
+from app.services.referral_service import _parse_recurring_commission_tiers
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.partners import (
@@ -31,6 +32,8 @@ from ..schemas.partners import (
     AdminRejectRequest,
     AdminUpdateCommissionRequest,
     CampaignSummary,
+    PartnerCommissionRules,
+    RecurringCommissionTier,
 )
 
 
@@ -465,6 +468,13 @@ async def get_partner_detail(
         first_name=user.first_name,
         telegram_id=user.telegram_id,
         commission_percent=user.referral_commission_percent,
+        first_payment_percent=user.referral_first_payment_percent,
+        recurring_tiers=[
+            RecurringCommissionTier(threshold=t, percent=p)
+            for t, p in _parse_recurring_commission_tiers(user.referral_recurring_tiers)
+        ]
+        if user.referral_recurring_tiers
+        else [],
         partner_status=user.partner_status,
         balance_kopeks=user.balance_kopeks,
         total_referrals=summary['total_referrals'],
@@ -514,6 +524,81 @@ async def update_commission(
     )
 
     return {'success': True, 'commission_percent': request.commission_percent}
+
+
+@router.get('/{user_id}/commission-rules', response_model=PartnerCommissionRules)
+async def get_commission_rules(
+    user_id: int,
+    admin: User = Depends(require_permission('partners:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get per-partner commission overrides (first-payment % + recurring tier ladder)."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Пользователь не найден')
+
+    tiers = (
+        [
+            RecurringCommissionTier(threshold=t, percent=p)
+            for t, p in _parse_recurring_commission_tiers(user.referral_recurring_tiers)
+        ]
+        if user.referral_recurring_tiers
+        else []
+    )
+    return PartnerCommissionRules(
+        first_payment_percent=user.referral_first_payment_percent,
+        recurring_tiers=tiers,
+    )
+
+
+@router.put('/{user_id}/commission-rules', response_model=PartnerCommissionRules)
+async def update_commission_rules(
+    user_id: int,
+    request: PartnerCommissionRules,
+    admin: User = Depends(require_permission('partners:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Replace per-partner commission overrides. null/empty fields inherit global behavior."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Пользователь не найден')
+
+    if user.partner_status != PartnerStatus.APPROVED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Пользователь не является партнёром',
+        )
+
+    if request.recurring_tiers:
+        sorted_tiers = sorted(request.recurring_tiers, key=lambda tier: tier.threshold)
+        tiers_str = ','.join(f'{tier.threshold}:{tier.percent}' for tier in sorted_tiers)
+    else:
+        tiers_str = None
+
+    user.referral_first_payment_percent = request.first_payment_percent
+    user.referral_recurring_tiers = tiers_str
+    await db.commit()
+
+    logger.info(
+        'Партнёрские правила комиссии обновлены',
+        user_id=user_id,
+        admin_id=admin.id,
+        first_payment_percent=request.first_payment_percent,
+        recurring_tiers=tiers_str,
+    )
+
+    stored_tiers = (
+        [
+            RecurringCommissionTier(threshold=t, percent=p)
+            for t, p in _parse_recurring_commission_tiers(tiers_str)
+        ]
+        if tiers_str
+        else []
+    )
+    return PartnerCommissionRules(
+        first_payment_percent=user.referral_first_payment_percent,
+        recurring_tiers=stored_tiers,
+    )
 
 
 @router.post('/{user_id}/revoke')

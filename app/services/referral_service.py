@@ -156,9 +156,18 @@ async def calculate_referral_commission_percent(
     base_percent = get_effective_referral_commission_percent(referrer)
 
     if is_first_payment:
+        # Per-partner first-payment override (explicit value incl. 0); None = inherit global.
+        partner_first = getattr(referrer, 'referral_first_payment_percent', None)
+        if partner_first is not None:
+            return _normalize_percent(partner_first, base_percent)
         return _normalize_percent(settings.REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT, base_percent)
 
-    tiers = _parse_recurring_commission_tiers(settings.REFERRAL_RECURRING_COMMISSION_TIERS)
+    # Recurring: a per-partner tier ladder overrides the global ladder; None/empty = global.
+    partner_tiers_raw = getattr(referrer, 'referral_recurring_tiers', None)
+    tiers = _parse_recurring_commission_tiers(partner_tiers_raw) if partner_tiers_raw else []
+    tier_source = 'partner' if tiers else 'global'
+    if not tiers:
+        tiers = _parse_recurring_commission_tiers(settings.REFERRAL_RECURRING_COMMISSION_TIERS)
     if not tiers:
         return base_percent
 
@@ -175,6 +184,7 @@ async def calculate_referral_commission_percent(
         referrer_id=referrer.id,
         paid_referrals_count=paid_referrals_count,
         commission_percent=selected_percent,
+        tier_source=tier_source,
     )
     return selected_percent
 

@@ -212,6 +212,21 @@ class CampaignSummary(BaseModel):
     earnings_kopeks: int = 0
 
 
+class RecurringCommissionTier(BaseModel):
+    """One step of the per-partner recurring commission ladder."""
+
+    # Partner's paid-referral count at/above which `percent` applies.
+    threshold: int = Field(..., ge=0)
+    percent: int = Field(..., ge=0, le=100)
+
+
+class PartnerCommissionRules(BaseModel):
+    """Per-partner commission overrides. null/empty = inherit global behavior."""
+
+    first_payment_percent: int | None = Field(None, ge=0, le=100)
+    recurring_tiers: list[RecurringCommissionTier] = []
+
+
 class AdminPartnerDetailResponse(BaseModel):
     """Detailed partner info for admin."""
 
@@ -220,6 +235,8 @@ class AdminPartnerDetailResponse(BaseModel):
     first_name: str | None = None
     telegram_id: int | None = None
     commission_percent: int | None = None
+    first_payment_percent: int | None = None
+    recurring_tiers: list[RecurringCommissionTier] = []
     partner_status: str
     balance_kopeks: int = 0
     total_referrals: int = 0
