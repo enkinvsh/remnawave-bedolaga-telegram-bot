@@ -588,10 +588,7 @@ async def update_commission_rules(
     )
 
     stored_tiers = (
-        [
-            RecurringCommissionTier(threshold=t, percent=p)
-            for t, p in _parse_recurring_commission_tiers(tiers_str)
-        ]
+        [RecurringCommissionTier(threshold=t, percent=p) for t, p in _parse_recurring_commission_tiers(tiers_str)]
         if tiers_str
         else []
     )
