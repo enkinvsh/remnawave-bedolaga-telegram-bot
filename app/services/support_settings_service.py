@@ -102,11 +102,18 @@ class SupportSettingsService:
         return cls.get_system_mode() in {'tickets', 'both'}
 
     @classmethod
+    def get_tickets_target_url(cls) -> str | None:
+        """Route target for 'tickets'/'both' mode: the explicit SUPPORT_SYSTEM_URL if set,
+        otherwise the support contact (SUPPORT_USERNAME). Lets single-destination projects
+        configure support with a single knob."""
+        return cls.get_support_system_url() or settings.get_support_contact_url()
+
+    @classmethod
     def is_native_tickets_enabled(cls) -> bool:
-        """Native in-bot tickets are a fallback only: they stay active while no external
-        support system (thready/support-bot) target is configured. Once SUPPORT_SYSTEM_URL
-        is set, support is routed externally and native tickets are disabled."""
-        return cls.is_tickets_enabled() and not cls.get_support_system_url()
+        """Native in-bot tickets are a fallback only: active while NO external support target
+        (SUPPORT_SYSTEM_URL or SUPPORT_USERNAME) is configured. Once any is set, support is
+        routed externally and native tickets are disabled."""
+        return cls.is_tickets_enabled() and not cls.get_tickets_target_url()
 
     @classmethod
     def is_contact_enabled(cls) -> bool:

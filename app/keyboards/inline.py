@@ -2284,24 +2284,22 @@ def get_support_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
 
         tickets_enabled = SupportSettingsService.is_tickets_enabled()
         contact_enabled = SupportSettingsService.is_contact_enabled()
-        system_url = SupportSettingsService.get_support_system_url()
+        route_url = SupportSettingsService.get_tickets_target_url()
     except Exception:
         tickets_enabled = True
         contact_enabled = True
-        system_url = settings.get_support_system_url()
+        route_url = settings.get_support_system_url() or settings.get_support_contact_url()
+    contact_url = settings.get_support_contact_url()
     rows: list[list[InlineKeyboardButton]] = []
-    # Tickets mode: route to external support system (thready/support-bot) when configured,
-    # otherwise fall back to native in-bot tickets.
+    route_shown = False
+    # Tickets mode: route to the external support target (SUPPORT_SYSTEM_URL, else the support
+    # contact SUPPORT_USERNAME). Native in-bot tickets show only when no target is configured.
     if tickets_enabled:
-        if system_url:
+        if route_url:
             rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=texts.t('CONTACT_SUPPORT', '💬 Написать в поддержку'),
-                        url=system_url,
-                    )
-                ]
+                [InlineKeyboardButton(text=texts.t('CONTACT_SUPPORT', '💬 Написать в поддержку'), url=route_url)]
             )
+            route_shown = True
         else:
             rows.append(
                 [
@@ -2313,13 +2311,13 @@ def get_support_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
             rows.append(
                 [InlineKeyboardButton(text=texts.t('MY_TICKETS_BUTTON', '📋 Мои тикеты'), callback_data='my_tickets')]
             )
-    # Direct contact
-    if contact_enabled and settings.get_support_contact_url():
+    # Direct contact (skip if it duplicates the route button already shown)
+    if contact_enabled and contact_url and not (route_shown and contact_url == route_url):
         rows.append(
             [
                 InlineKeyboardButton(
                     text=texts.t('CONTACT_SUPPORT_BUTTON', '💬 Связаться с поддержкой'),
-                    url=settings.get_support_contact_url() or 'https://t.me/',
+                    url=contact_url,
                 )
             ]
         )
