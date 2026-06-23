@@ -27,6 +27,7 @@ def _get_support_settings_keyboard(language: str) -> types.InlineKeyboardMarkup:
     user_notif = SupportSettingsService.get_user_ticket_notifications_enabled()
     sla_enabled = SupportSettingsService.get_sla_enabled()
     sla_minutes = SupportSettingsService.get_sla_minutes()
+    system_url = SupportSettingsService.get_support_system_url()
 
     rows: list[list[types.InlineKeyboardButton]] = []
 
@@ -63,6 +64,17 @@ def _get_support_settings_keyboard(language: str) -> types.InlineKeyboardMarkup:
                 text=mode_button('ADMIN_SUPPORT_SETTINGS_MODE_BOTH', 'Оба', mode == 'both'),
                 callback_data='admin_support_mode_both',
             ),
+        ]
+    )
+
+    rows.append(
+        [
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_SUPPORT_SETTINGS_SYSTEM_URL', '🔗 Чат поддержки (thready/бот): {value}').format(
+                    value=system_url or texts.t('ADMIN_SUPPORT_SETTINGS_SYSTEM_URL_EMPTY', 'не задан')
+                ),
+                callback_data='admin_support_set_system_url',
+            )
         ]
     )
 
@@ -211,6 +223,7 @@ async def toggle_sla(callback: types.CallbackQuery, db_user: User, db: AsyncSess
 class SupportAdvancedStates(StatesGroup):
     waiting_for_sla_minutes = State()
     waiting_for_moderator_id = State()
+    waiting_for_system_url = State()
 
 
 @admin_required
@@ -491,6 +504,51 @@ async def delete_sent_message(callback: types.CallbackQuery, db_user: User, db: 
             await callback.answer(texts.t('ADMIN_SUPPORT_MESSAGE_DELETED', 'Сообщение удалено'))
 
 
+@admin_required
+@error_handler
+async def start_set_system_url(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    texts = get_texts(db_user.language)
+    current = SupportSettingsService.get_support_system_url() or texts.t(
+        'ADMIN_SUPPORT_SETTINGS_SYSTEM_URL_EMPTY', 'не задан'
+    )
+    await callback.message.edit_text(
+        texts.t(
+            'ADMIN_SUPPORT_SYSTEM_URL_PROMPT',
+            '🔗 <b>Чат поддержки (thready / support-bot)</b>\n\n'
+            'Текущий: <code>{current}</code>\n\n'
+            'Отправьте @username бота поддержки или ссылку — режим «Тикеты» будет вести туда.\n'
+            'Отправьте «-», чтобы очистить (вернутся нативные тикеты).',
+        ).format(current=html.escape(current)),
+        parse_mode='HTML',
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[[types.InlineKeyboardButton(text=texts.BACK, callback_data='admin_support_settings')]]
+        ),
+    )
+    await state.set_state(SupportAdvancedStates.waiting_for_system_url)
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def handle_system_url(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
+    texts = get_texts(db_user.language)
+    raw = (message.text or '').strip()
+    if raw in {'-', '—'}:
+        raw = ''
+    SupportSettingsService.set_support_system_url(raw)
+    await state.clear()
+    markup = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('DELETE_MESSAGE', '🗑 Удалить'), callback_data='admin_support_delete_msg'
+                )
+            ]
+        ]
+    )
+    await message.answer(texts.t('ADMIN_SUPPORT_SYSTEM_URL_SAVED', '✅ Чат поддержки обновлён'), reply_markup=markup)
+
+
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_support_settings, F.data == 'admin_support_settings')
     dp.callback_query.register(toggle_support_menu, F.data == 'admin_support_toggle_menu')
@@ -504,9 +562,11 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(toggle_user_notifications, F.data == 'admin_support_toggle_user_notifications')
     dp.callback_query.register(toggle_sla, F.data == 'admin_support_toggle_sla')
     dp.callback_query.register(start_set_sla_minutes, F.data == 'admin_support_set_sla_minutes')
+    dp.callback_query.register(start_set_system_url, F.data == 'admin_support_set_system_url')
     dp.callback_query.register(start_add_moderator, F.data == 'admin_support_add_moderator')
     dp.callback_query.register(start_remove_moderator, F.data == 'admin_support_remove_moderator')
     dp.callback_query.register(list_moderators, F.data == 'admin_support_list_moderators')
     dp.message.register(handle_new_desc, SupportSettingsStates.waiting_for_desc)
     dp.message.register(handle_sla_minutes, SupportAdvancedStates.waiting_for_sla_minutes)
+    dp.message.register(handle_system_url, SupportAdvancedStates.waiting_for_system_url)
     dp.message.register(handle_moderator_id, SupportAdvancedStates.waiting_for_moderator_id)

@@ -65,6 +65,23 @@ class SupportSettingsService:
         settings.SUPPORT_SYSTEM_MODE = mode_clean
         return cls._save()
 
+    # Support system URL (thready/support-bot target for 'tickets' mode)
+    @classmethod
+    def get_support_system_url(cls) -> str | None:
+        cls._load()
+        raw = cls._data.get('system_url')
+        if raw is None or not str(raw).strip():
+            return settings.get_support_system_url()
+        return settings.normalize_support_target(raw)
+
+    @classmethod
+    def set_support_system_url(cls, url: str) -> bool:
+        url_clean = (url or '').strip()
+        cls._load()
+        cls._data['system_url'] = url_clean
+        settings.SUPPORT_SYSTEM_URL = url_clean
+        return cls._save()
+
     # Main menu visibility
     @classmethod
     def is_support_menu_enabled(cls) -> bool:
@@ -83,6 +100,13 @@ class SupportSettingsService:
     @classmethod
     def is_tickets_enabled(cls) -> bool:
         return cls.get_system_mode() in {'tickets', 'both'}
+
+    @classmethod
+    def is_native_tickets_enabled(cls) -> bool:
+        """Native in-bot tickets are a fallback only: they stay active while no external
+        support system (thready/support-bot) target is configured. Once SUPPORT_SYSTEM_URL
+        is set, support is routed externally and native tickets are disabled."""
+        return cls.is_tickets_enabled() and not cls.get_support_system_url()
 
     @classmethod
     def is_contact_enabled(cls) -> bool:

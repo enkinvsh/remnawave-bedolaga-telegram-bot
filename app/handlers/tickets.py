@@ -37,10 +37,27 @@ class TicketStates(StatesGroup):
     waiting_for_reply = State()
 
 
+async def _redirect_if_native_tickets_disabled(callback: types.CallbackQuery, db_user: User) -> bool:
+    """Native in-bot tickets are replaced by external support routing (thready/support-bot)
+    when SUPPORT_SYSTEM_URL is configured. Bounce stale ticket buttons/callbacks back to the
+    support menu instead of opening the native ticket flow. Returns True if redirected."""
+    from app.services.support_settings_service import SupportSettingsService
+
+    if SupportSettingsService.is_native_tickets_enabled():
+        return False
+
+    from app.handlers.support import show_support_info
+
+    await show_support_info(callback, db_user)
+    return True
+
+
 async def show_ticket_priority_selection(
     callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession
 ):
     """Начать создание тикета без выбора приоритета: сразу просим заголовок"""
+    if await _redirect_if_native_tickets_disabled(callback, db_user):
+        return
     texts = get_texts(db_user.language)
 
     # Глобальный блок и наличие активного тикета
@@ -314,6 +331,8 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
 
 
 async def show_my_tickets(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    if await _redirect_if_native_tickets_disabled(callback, db_user):
+        return
     texts = get_texts(db_user.language)
 
     # Определяем текущую страницу
@@ -393,6 +412,8 @@ async def show_my_tickets(callback: types.CallbackQuery, db_user: User, db: Asyn
 
 
 async def show_my_tickets_closed(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    if await _redirect_if_native_tickets_disabled(callback, db_user):
+        return
     texts = get_texts(db_user.language)
     # Пагинация закрытых
     current_page = 1
@@ -512,6 +533,8 @@ def _split_text_into_pages(header: str, message_blocks: list[str], max_len: int 
 
 async def view_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     """Показать детали тикета с пагинацией"""
+    if await _redirect_if_native_tickets_disabled(callback, db_user):
+        return
     data_str = callback.data
     page = 1
     ticket_id = None
@@ -723,6 +746,8 @@ async def _try_delete_message_later(bot: Bot, chat_id: int, message_id: int, del
 
 async def reply_to_ticket(callback: types.CallbackQuery, state: FSMContext, db_user: User):
     """Начать ответ на тикет"""
+    if await _redirect_if_native_tickets_disabled(callback, db_user):
+        return
     ticket_id = int(callback.data.replace('reply_ticket_', ''))
 
     await state.update_data(ticket_id=ticket_id)

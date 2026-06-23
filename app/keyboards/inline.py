@@ -2284,22 +2284,35 @@ def get_support_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
 
         tickets_enabled = SupportSettingsService.is_tickets_enabled()
         contact_enabled = SupportSettingsService.is_contact_enabled()
+        system_url = SupportSettingsService.get_support_system_url()
     except Exception:
         tickets_enabled = True
         contact_enabled = True
+        system_url = settings.get_support_system_url()
     rows: list[list[InlineKeyboardButton]] = []
-    # Tickets
+    # Tickets mode: route to external support system (thready/support-bot) when configured,
+    # otherwise fall back to native in-bot tickets.
     if tickets_enabled:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=texts.t('CREATE_TICKET_BUTTON', '🎫 Создать тикет'), callback_data='create_ticket'
-                )
-            ]
-        )
-        rows.append(
-            [InlineKeyboardButton(text=texts.t('MY_TICKETS_BUTTON', '📋 Мои тикеты'), callback_data='my_tickets')]
-        )
+        if system_url:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('CONTACT_SUPPORT', '💬 Написать в поддержку'),
+                        url=system_url,
+                    )
+                ]
+            )
+        else:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('CREATE_TICKET_BUTTON', '🎫 Создать тикет'), callback_data='create_ticket'
+                    )
+                ]
+            )
+            rows.append(
+                [InlineKeyboardButton(text=texts.t('MY_TICKETS_BUTTON', '📋 Мои тикеты'), callback_data='my_tickets')]
+            )
     # Direct contact
     if contact_enabled and settings.get_support_contact_url():
         rows.append(

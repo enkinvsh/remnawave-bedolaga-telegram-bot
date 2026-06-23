@@ -95,6 +95,8 @@ class SupportConfigResponse(BaseModel):
     support_type: str  # "tickets", "profile", "url", "both"
     support_url: str | None = None
     support_username: str | None = None
+    system_url: str | None = None  # external support target (thready/support-bot) for 'tickets' mode
+    native_tickets_enabled: bool = True  # native cabinet tickets active; false => support routed externally
 
 
 class InfoVisibilityResponse(BaseModel):
@@ -314,8 +316,12 @@ async def update_user_language(
 @router.get('/support-config', response_model=SupportConfigResponse)
 async def get_support_config():
     """Get support/tickets configuration for cabinet."""
-    # Use SUPPORT_SYSTEM_MODE setting (configurable from admin panel)
-    support_mode = settings.get_support_system_mode()  # returns: tickets, contact, or both
+    from app.services.support_settings_service import SupportSettingsService
+
+    # Read mode from the runtime service (admin-editable; falls back to SUPPORT_SYSTEM_MODE)
+    support_mode = SupportSettingsService.get_system_mode()  # returns: tickets, contact, or both
+    system_url = SupportSettingsService.get_support_system_url()
+    native_tickets_enabled = SupportSettingsService.is_native_tickets_enabled()
 
     # Map support mode to support type for frontend
     # - "tickets" mode -> tickets only, no contact
@@ -336,6 +342,8 @@ async def get_support_config():
         support_type=support_type,
         support_url=None,  # Cabinet doesn't use custom URLs
         support_username=settings.SUPPORT_USERNAME,  # Always return for fallback
+        system_url=system_url,  # external support target (thready/support-bot)
+        native_tickets_enabled=native_tickets_enabled,
     )
 
 

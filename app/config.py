@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     SUPPORT_USERNAME: str = '@support'
     SUPPORT_MENU_ENABLED: bool = True
     SUPPORT_SYSTEM_MODE: str = 'both'  # one of: tickets, contact, both
+    SUPPORT_SYSTEM_URL: str = ''  # 'tickets' mode target (thready/support-bot): @username or full URL
     # SLA for support tickets
     SUPPORT_TICKET_SLA_ENABLED: bool = True
     SUPPORT_TICKET_SLA_MINUTES: int = 5
@@ -3226,30 +3227,39 @@ class Settings(BaseSettings):
     def _clean_support_contact(self) -> str:
         return (self.SUPPORT_USERNAME or '').strip()
 
-    def get_support_contact_url(self) -> str | None:
-        contact = self._clean_support_contact()
+    @staticmethod
+    def normalize_support_target(raw: str | None) -> str | None:
+        """Normalize a support target (@username / t.me link / URL) into a clickable URL."""
+        target = (raw or '').strip()
 
-        if not contact:
+        if not target:
             return None
 
-        if contact.startswith(('http://', 'https://', 'tg://')):
-            return contact
+        if target.startswith(('http://', 'https://', 'tg://')):
+            return target
 
-        contact_without_prefix = contact.lstrip('@')
+        target_without_prefix = target.lstrip('@')
 
-        if contact_without_prefix.startswith(('t.me/', 'telegram.me/', 'telegram.dog/')):
-            return f'https://{contact_without_prefix}'
+        if target_without_prefix.startswith(('t.me/', 'telegram.me/', 'telegram.dog/')):
+            return f'https://{target_without_prefix}'
 
-        if contact.startswith(('t.me/', 'telegram.me/', 'telegram.dog/')):
-            return f'https://{contact}'
+        if target.startswith(('t.me/', 'telegram.me/', 'telegram.dog/')):
+            return f'https://{target}'
 
-        if '.' in contact_without_prefix:
-            return f'https://{contact_without_prefix}'
+        if '.' in target_without_prefix:
+            return f'https://{target_without_prefix}'
 
-        if contact_without_prefix:
-            return f'https://t.me/{contact_without_prefix}'
+        if target_without_prefix:
+            return f'https://t.me/{target_without_prefix}'
 
         return None
+
+    def get_support_contact_url(self) -> str | None:
+        return self.normalize_support_target(self._clean_support_contact())
+
+    def get_support_system_url(self) -> str | None:
+        """Resolve the thready/support-bot target used by the 'tickets' support mode."""
+        return self.normalize_support_target(self.SUPPORT_SYSTEM_URL)
 
     def get_support_contact_display(self) -> str:
         contact = self._clean_support_contact()
