@@ -3,13 +3,15 @@
 from datetime import UTC, datetime
 
 import structlog
+from aiogram.types import InlineKeyboardMarkup
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import BroadcastHistory, Subscription, SubscriptionStatus, Tariff, User
-from app.handlers.admin.messages import get_target_users_count
+from app.handlers.admin.messages import create_broadcast_keyboard, get_target_users_count
 from app.keyboards.admin import BROADCAST_BUTTONS, DEFAULT_BROADCAST_BUTTONS
+from app.services.broadcast_preflight import BroadcastPreflightError, preflight_broadcast_message
 from app.services.broadcast_service import (
     BroadcastConfig,
     BroadcastMediaConfig,
@@ -244,6 +246,36 @@ def _validate_buttons(buttons: list[str]) -> bool:
     return all(button in BROADCAST_BUTTONS for button in buttons)
 
 
+async def _run_broadcast_preflight(
+    message_text: str,
+    media_config: BroadcastMediaConfig | None,
+    keyboard: InlineKeyboardMarkup | None,
+) -> None:
+    """Пре-флайт перед созданием записи рассылки: системно битое сообщение → HTTP 422.
+
+    Бот берётся тот же, что запускает рассылку (`broadcast_service.bot`). Если он ещё
+    не инициализирован в процессе — деградируем мягко: логируем и пропускаем пре-флайт,
+    но не блокируем создание рассылки.
+    """
+    bot = broadcast_service.bot
+    if bot is None:
+        logger.warning('Пре-флайт рассылки пропущен: инстанс бота недоступен')
+        return
+
+    try:
+        await preflight_broadcast_message(
+            bot,
+            message_text=message_text,
+            media=media_config,
+            keyboard=keyboard,
+        )
+    except BroadcastPreflightError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={'reason': exc.reason_key, 'detail': exc.detail},
+        ) from exc
+
+
 # ============ Endpoints ============
 
 
@@ -420,6 +452,21 @@ async def create_broadcast(
             detail=f'Текст слишком длинный для сообщения с медиа. Максимум 1024 символов, сейчас {len(message_text)}. Сократите текст или уберите медиафайл.',
         )
 
+    media_config = None
+    if media_payload:
+        media_config = BroadcastMediaConfig(
+            type=media_payload.type,
+            file_id=media_payload.file_id,
+            caption=media_payload.caption or message_text,
+        )
+
+    custom_buttons_payload = [btn.model_dump() for btn in request.custom_buttons] if request.custom_buttons else None
+
+    # Pre-flight: тестовая отправка в служебный чат ДО создания записи — битое
+    # сообщение падает как 422, а не уходит фан-аутом на сотни получателей.
+    keyboard = create_broadcast_keyboard(request.selected_buttons, custom_buttons=custom_buttons_payload)
+    await _run_broadcast_preflight(message_text, media_config, keyboard)
+
     # Create broadcast record
     broadcast = BroadcastHistory(
         target_type=request.target,
@@ -440,15 +487,6 @@ async def create_broadcast(
     await db.commit()
     await db.refresh(broadcast)
 
-    # Prepare media config
-    media_config = None
-    if media_payload:
-        media_config = BroadcastMediaConfig(
-            type=media_payload.type,
-            file_id=media_payload.file_id,
-            caption=media_payload.caption or message_text,
-        )
-
     # Create broadcast config
     config = BroadcastConfig(
         target=request.target,
@@ -456,7 +494,7 @@ async def create_broadcast(
         selected_buttons=request.selected_buttons,
         media=media_config,
         initiator_name=admin.username or f'Admin #{admin.id}',
-        custom_buttons=[btn.model_dump() for btn in request.custom_buttons] if request.custom_buttons else None,
+        custom_buttons=custom_buttons_payload,
         category=request.category,
     )
 
@@ -616,6 +654,25 @@ async def create_combined_broadcast(
 
     media_payload = request.media
 
+    # Pre-flight (только telegram/both): тестовая отправка в служебный чат ДО
+    # создания записи — битое сообщение падает как 422, а не фан-аутом на сотни
+    # получателей. Медиа-конфиг и кнопки переиспользуются в telegram_config ниже.
+    telegram_media_config = None
+    telegram_custom_buttons = None
+    if request.channel in ('telegram', 'both'):
+        telegram_message_text = request.message_text.strip()
+        if media_payload:
+            telegram_media_config = BroadcastMediaConfig(
+                type=media_payload.type,
+                file_id=media_payload.file_id,
+                caption=media_payload.caption or request.message_text,
+            )
+        telegram_custom_buttons = (
+            [btn.model_dump() for btn in request.custom_buttons] if request.custom_buttons else None
+        )
+        keyboard = create_broadcast_keyboard(request.selected_buttons, custom_buttons=telegram_custom_buttons)
+        await _run_broadcast_preflight(telegram_message_text, telegram_media_config, keyboard)
+
     # Create broadcast record
     broadcast = BroadcastHistory(
         target_type=request.target,
@@ -641,23 +698,14 @@ async def create_combined_broadcast(
 
     # Start broadcasts based on channel
     if request.channel in ('telegram', 'both'):
-        # Prepare media config
-        media_config = None
-        if media_payload:
-            media_config = BroadcastMediaConfig(
-                type=media_payload.type,
-                file_id=media_payload.file_id,
-                caption=media_payload.caption or request.message_text,
-            )
-
         # Create telegram broadcast config
         telegram_config = BroadcastConfig(
             target=request.target,
             message_text=request.message_text.strip(),
             selected_buttons=request.selected_buttons,
-            media=media_config,
+            media=telegram_media_config,
             initiator_name=admin_name,
-            custom_buttons=[btn.model_dump() for btn in request.custom_buttons] if request.custom_buttons else None,
+            custom_buttons=telegram_custom_buttons,
             category=request.category,
         )
 

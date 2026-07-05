@@ -88,6 +88,11 @@ class Settings(BaseSettings):
     ADMIN_REPORTS_TOPIC_ID: int | None = None
     ADMIN_REPORTS_SEND_TIME: str | None = None
 
+    # Пре-флайт рассылок: перед массовым фан-аутом сделать одну тестовую отправку
+    # в служебный чат, чтобы битый HTML / мёртвый media file_id падал сразу (422),
+    # а не сжигал сотни получателей. См. app/services/broadcast_preflight.py.
+    BROADCAST_PREFLIGHT_ENABLED: bool = True
+
     CHANNEL_IS_REQUIRED_SUB: bool = False
     CHANNEL_DISABLE_TRIAL_ON_UNSUBSCRIBE: bool = True
     CHANNEL_REQUIRED_FOR_ALL: bool = False

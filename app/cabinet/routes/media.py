@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from app.bot_factory import create_bot
 from app.config import settings
 from app.database.models import User
+from app.services.broadcast_preflight import resolve_service_chat_id
 
 from ..dependencies import get_current_cabinet_user
 
@@ -138,22 +139,6 @@ class MediaUploadResponse(BaseModel):
     media_url: str
 
 
-def _resolve_target_chat_id() -> int:
-    """Get chat ID for uploading files (notification channel or first admin)."""
-    chat_id = settings.get_admin_notifications_chat_id()
-    if chat_id is not None:
-        return chat_id
-
-    admin_ids = settings.get_admin_ids()
-    if admin_ids:
-        return admin_ids[0]
-
-    raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail='No chat configured for file uploads',
-    )
-
-
 def _build_media_url(request: Request, file_id: str) -> str:
     """Build a signed, expiring URL for downloading media."""
     base = str(request.url_for('cabinet_download_media', file_id=file_id))
@@ -213,7 +198,7 @@ async def upload_media(
             detail='This file type is not allowed',
         )
 
-    target_chat_id = _resolve_target_chat_id()
+    target_chat_id = resolve_service_chat_id()
     upload = BufferedInputFile(file_bytes, filename=file.filename or 'upload')
 
     bot = create_bot()

@@ -159,6 +159,10 @@ class BroadcastService:
     def set_bot(self, bot: Bot) -> None:
         self._bot = bot
 
+    @property
+    def bot(self) -> Bot | None:
+        return self._bot
+
     def is_running(self, broadcast_id: int) -> bool:
         task_entry = self._tasks.get(broadcast_id)
         return bool(task_entry and not task_entry.task.done())
