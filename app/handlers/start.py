@@ -16,6 +16,7 @@ from app.database.crud.campaign import (
     get_campaign_by_id,
     get_campaign_by_start_parameter,
 )
+from app.database.crud.campaign_starts import record_campaign_start
 from app.database.crud.subscription import decrement_subscription_server_counts
 from app.database.crud.user import (
     create_user,
@@ -890,6 +891,15 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                 start_parameter=campaign.start_parameter,
             )
             await state.update_data(campaign_id=campaign.id)
+            # Трекинг старта: КАЖДЫЙ заход по рекламной ссылке (новый И существующий
+            # юзер) — раньше существующий юзер не оставлял следа, это и есть дыра «0 рег.».
+            await record_campaign_start(
+                db,
+                campaign.id,
+                telegram_id=message.from_user.id,
+                user_id=db_user.id if db_user else None,
+                source='bot',
+            )
             # Persist campaign to Redis immediately so it survives if user opens
             # miniapp/cabinet (via Telegram menu button) before completing the
             # bot registration flow. Mirrors the pending_referral mechanism.

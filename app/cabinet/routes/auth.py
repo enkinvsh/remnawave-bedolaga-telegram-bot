@@ -16,6 +16,7 @@ from app.database.crud.campaign import (
     get_campaign_by_start_parameter,
     get_campaign_registration_by_user,
 )
+from app.database.crud.campaign_starts import record_campaign_start
 from app.database.crud.rbac import UserRoleCRUD
 from app.database.crud.system_setting import get_setting_value
 from app.database.crud.user import (
@@ -239,6 +240,16 @@ async def _process_campaign_bonus(
             campaign = await get_campaign_by_start_parameter(db, campaign_slug, only_active=True)
             if not campaign:
                 return None
+
+            # Трекинг старта: campaign-tagged визит кабинета. Пишем ДО дедупа/партнёрских
+            # проверок — существующий/уже-зарегистрированный юзер тоже оставляет след.
+            await record_campaign_start(
+                db,
+                campaign.id,
+                telegram_id=telegram_id,
+                user_id=user.id,
+                source='cabinet',
+            )
 
             # Skip if user IS the campaign partner — prevent self-referral
             if campaign.partner_user_id and campaign.partner_user_id == user.id:

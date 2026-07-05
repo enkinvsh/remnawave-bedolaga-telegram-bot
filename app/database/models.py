@@ -3308,6 +3308,27 @@ class AdvertisingCampaignRegistration(Base):
         return (self.balance_bonus_kopeks or 0) / 100
 
 
+class AdvertisingCampaignStart(Base):
+    # Сырые события: КАЖДЫЙ заход по рекламной ссылке (новый И существующий юзер).
+    # Дедупа нет намеренно — уникальность считается запросом, НЕ добавлять unique.
+    __tablename__ = 'advertising_campaign_starts'
+    __table_args__ = (Index('ix_campaign_start_campaign_created', 'campaign_id', 'created_at'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    campaign_id = Column(
+        Integer,
+        ForeignKey('advertising_campaigns.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    telegram_id = Column(BigInteger, nullable=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    source = Column(String(16), nullable=False)  # 'bot' | 'cabinet'
+    created_at = Column(AwareDateTime(), default=func.now())
+
+    campaign = relationship('AdvertisingCampaign')
+
+
 class TicketStatus(Enum):
     OPEN = 'open'
     ANSWERED = 'answered'
