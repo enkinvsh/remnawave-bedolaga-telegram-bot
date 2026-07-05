@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.crud.campaign import get_campaign_statistics, get_campaigns_count, get_campaigns_list
+from app.database.crud.campaign import get_campaigns_aggregate_stats
 from app.database.crud.server_squad import get_server_statistics
 from app.database.crud.subscription import get_subscriptions_statistics
 from app.database.crud.transaction import REAL_PAYMENT_METHODS, get_revenue_by_period, get_transactions_statistics
@@ -193,6 +193,8 @@ class TopCampaignItem(BaseModel):
     start_parameter: str
     bonus_type: str
     is_active: bool
+    starts_total: int
+    starts_unique: int
     registrations: int
     conversions: int
     conversion_rate: float
@@ -206,6 +208,7 @@ class TopCampaignsResponse(BaseModel):
 
     campaigns: list[TopCampaignItem]
     total_campaigns: int
+    total_starts: int
     total_registrations: int
     total_revenue_kopeks: int
 
@@ -773,45 +776,55 @@ async def get_top_campaigns(
     admin: User = Depends(require_permission('stats:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Get top advertising campaigns with statistics."""
+    """Get top advertising campaigns with statistics.
+
+    Ranking happens over the FULL campaign set and ONLY THEN is ``limit`` applied.
+    The previous implementation truncated to the first 100 campaigns (via
+    ``get_campaigns_list(..., limit=100)``) BEFORE sorting, so with 138 live
+    campaigns a top earner ranked 101+ was silently dropped and the dashboard
+    "Топ РК ссылок" widget showed zeros. It also ran ~5 queries per campaign
+    (N+1). Both are fixed here by a single aggregate query over every campaign.
+    """
     try:
-        # Get all campaigns
-        campaigns = await get_campaigns_list(db, offset=0, limit=100, include_inactive=True)
+        all_stats = await get_campaigns_aggregate_stats(db, None)
+
+        total_starts = sum(s.starts_total for s in all_stats)
+        total_registrations = sum(s.registrations for s in all_stats)
+        total_revenue = sum(s.total_amount_kopeks for s in all_stats)
+
+        ranked = sorted(
+            all_stats,
+            key=lambda s: (s.total_amount_kopeks, s.registrations, s.starts_total),
+            reverse=True,
+        )
 
         campaign_items = []
-        total_registrations = 0
-        total_revenue = 0
-
-        for campaign in campaigns:
-            stats = await get_campaign_statistics(db, campaign.id)
+        for s in ranked[:limit]:
+            conversion_rate = round((s.paying_users / s.registrations) * 100, 1) if s.registrations else 0.0
+            avg_revenue = int(s.total_amount_kopeks / s.registrations) if s.registrations else 0
 
             campaign_items.append(
                 TopCampaignItem(
-                    id=campaign.id,
-                    name=campaign.name,
-                    start_parameter=campaign.start_parameter,
-                    bonus_type=campaign.bonus_type,
-                    is_active=campaign.is_active,
-                    registrations=stats.get('registrations', 0),
-                    conversions=stats.get('conversion_count', 0),
-                    conversion_rate=stats.get('conversion_rate', 0.0),
-                    total_revenue_kopeks=stats.get('total_revenue_kopeks', 0),
-                    avg_revenue_per_user_kopeks=stats.get('avg_revenue_per_user_kopeks', 0),
-                    created_at=campaign.created_at.isoformat() if campaign.created_at else None,
+                    id=s.campaign_id,
+                    name=s.name,
+                    start_parameter=s.start_parameter,
+                    bonus_type=s.bonus_type,
+                    is_active=s.is_active,
+                    starts_total=s.starts_total,
+                    starts_unique=s.starts_unique,
+                    registrations=s.registrations,
+                    conversions=s.paying_users,
+                    conversion_rate=conversion_rate,
+                    total_revenue_kopeks=s.total_amount_kopeks,
+                    avg_revenue_per_user_kopeks=avg_revenue,
+                    created_at=s.created_at.isoformat() if s.created_at else None,
                 )
             )
 
-            total_registrations += stats.get('registrations', 0)
-            total_revenue += stats.get('total_revenue_kopeks', 0)
-
-        # Sort by revenue
-        campaign_items.sort(key=lambda x: x.total_revenue_kopeks, reverse=True)
-
-        total_campaigns = await get_campaigns_count(db)
-
         return TopCampaignsResponse(
-            campaigns=campaign_items[:limit],
-            total_campaigns=total_campaigns,
+            campaigns=campaign_items,
+            total_campaigns=len(all_stats),
+            total_starts=total_starts,
             total_registrations=total_registrations,
             total_revenue_kopeks=total_revenue,
         )
