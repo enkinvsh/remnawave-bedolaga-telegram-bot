@@ -52,6 +52,59 @@ _PROGRESS_MIN_INTERVAL_SEC = 5.0
 EMAIL_RATE_LIMIT = 8
 EMAIL_BATCH_SIZE = 50
 
+# Стабильная классификация провалов отправки для error_summary рассылки.
+ERR_RETRY_AFTER_EXHAUSTED = 'retry_after_exhausted'
+ERR_FORBIDDEN_BLOCKED = 'forbidden_blocked'
+ERR_BAD_REQUEST_BLOCKED = 'bad_request_blocked'
+ERR_BAD_REQUEST = 'bad_request'
+ERR_NETWORK_EXHAUSTED = 'network_exhausted'
+ERR_UNEXPECTED = 'unexpected'
+ERR_CANCELLED = 'cancelled'
+
+_ERROR_SAMPLE_CAP = 10
+_ERROR_TEXT_MAX = 200
+
+# Подстроки TelegramBadRequest, означающие «получатель недоступен» → blocked, а не failed.
+_BAD_REQUEST_BLOCKED_MARKERS = ('bot was blocked', 'user is deactivated', 'chat not found')
+
+
+@dataclass(slots=True)
+class _SendResult:
+    status: str  # 'sent' | 'blocked' | 'failed'
+    error_key: str | None = None
+    error_text: str | None = None
+
+
+def _sanitize_error(text: str) -> str:
+    return ' '.join(text.split())[:_ERROR_TEXT_MAX]
+
+
+def _classify_send_exception(exc: BaseException) -> _SendResult:
+    """Классифицирует исключение отправки в стабильный error_key.
+
+    Терминальные (blocked / bad_request) применяются немедленно; транзиентные
+    (retry_after / network / unexpected) возвращают ключ, под которым попытка
+    учитывается при исчерпании ретраев.
+    """
+    if isinstance(exc, TelegramRetryAfter):
+        return _SendResult('failed', ERR_RETRY_AFTER_EXHAUSTED, _sanitize_error(str(exc)))
+    if isinstance(exc, TelegramForbiddenError):
+        return _SendResult('blocked', ERR_FORBIDDEN_BLOCKED)
+    if isinstance(exc, TelegramBadRequest):
+        err = str(exc).lower()
+        if any(marker in err for marker in _BAD_REQUEST_BLOCKED_MARKERS):
+            return _SendResult('blocked', ERR_BAD_REQUEST_BLOCKED)
+        return _SendResult('failed', ERR_BAD_REQUEST, _sanitize_error(str(exc)))
+    if isinstance(exc, (TelegramNetworkError, TelegramServerError)):
+        return _SendResult('failed', ERR_NETWORK_EXHAUSTED, _sanitize_error(str(exc)))
+    return _SendResult('failed', ERR_UNEXPECTED, _sanitize_error(str(exc)))
+
+
+def _build_error_summary(counts: dict[str, int], samples: list[str]) -> dict | None:
+    if not counts and not samples:
+        return None
+    return {'counts': dict(counts), 'samples': list(samples)}
+
 
 @dataclass(slots=True)
 class BroadcastMediaConfig:
@@ -148,6 +201,7 @@ class BroadcastService:
         sent_count = 0
         failed_count = 0
         blocked_count = 0
+        error_summary: dict | None = None
 
         try:
             if cancel_event.is_set():
@@ -197,7 +251,7 @@ class BroadcastService:
                 TG_BATCH_DELAY=_TG_BATCH_DELAY,
             )
 
-            sent_count, failed_count, blocked_count, cancelled_during_run = await self._send_batched(
+            sent_count, failed_count, blocked_count, cancelled_during_run, error_summary = await self._send_batched(
                 broadcast_id,
                 recipient_ids,
                 config,
@@ -224,14 +278,15 @@ class BroadcastService:
                 failed_count,
                 blocked_count,
                 cancelled=False,
+                error_summary=error_summary,
             )
 
         except asyncio.CancelledError:
-            await self._mark_cancelled(broadcast_id, sent_count, failed_count, blocked_count)
+            await self._mark_cancelled(broadcast_id, sent_count, failed_count, blocked_count, error_summary)
             raise
         except Exception as exc:
             logger.exception('Критическая ошибка при выполнении рассылки', broadcast_id=broadcast_id, exc=exc)
-            await self._mark_failed(broadcast_id, sent_count, failed_count, blocked_count)
+            await self._mark_failed(broadcast_id, sent_count, failed_count, blocked_count, error_summary)
 
     async def _fetch_recipients(self, target: str, category: str = 'system') -> list[int]:
         """Загружает получателей и возвращает список telegram_id (скаляры, не ORM-объекты).
@@ -269,7 +324,7 @@ class BroadcastService:
         config: BroadcastConfig,
         keyboard: InlineKeyboardMarkup | None,
         cancel_event: asyncio.Event,
-    ) -> tuple[int, int, int, bool]:
+    ) -> tuple[int, int, int, bool, dict | None]:
         """
         Единый метод рассылки для любого количества получателей.
 
@@ -277,21 +332,34 @@ class BroadcastService:
         Прогресс обновляется каждые _PROGRESS_UPDATE_MESSAGES сообщений.
         Глобальная пауза при FloodWait.
 
-        Returns (sent_count, failed_count, blocked_count, was_cancelled).
+        Returns (sent_count, failed_count, blocked_count, was_cancelled, error_summary).
         """
         sent_count = 0
         failed_count = 0
         blocked_count = 0
         blocked_telegram_ids: list[int] = []
+        error_counts: dict[str, int] = {}
+        error_samples: list[str] = []
+        seen_sample_texts: set[str] = set()
 
         # Глобальная пауза при FloodWait — все корутины ждут
         flood_wait_until: float = 0.0
         last_progress_update: float = 0.0
         last_progress_count: int = 0
 
-        async def send_single(telegram_id: int) -> str:
-            """Returns 'sent', 'blocked', or 'failed'."""
+        def record_error(result: _SendResult) -> None:
+            if result.error_key is None:
+                return
+            error_counts[result.error_key] = error_counts.get(result.error_key, 0) + 1
+            text = result.error_text
+            if text and text not in seen_sample_texts and len(error_samples) < _ERROR_SAMPLE_CAP:
+                seen_sample_texts.add(text)
+                error_samples.append(text)
+
+        async def send_single(telegram_id: int) -> _SendResult:
             nonlocal flood_wait_until
+
+            last_error = _SendResult('failed', ERR_UNEXPECTED)
 
             for attempt in range(_TG_MAX_RETRIES):
                 # Глобальная пауза при FloodWait
@@ -300,15 +368,16 @@ class BroadcastService:
                     await asyncio.sleep(flood_wait_until - now)
 
                 if cancel_event.is_set():
-                    return 'failed'
+                    return _SendResult('failed', ERR_CANCELLED)
 
                 try:
                     await self._deliver_message(telegram_id, config, keyboard)
-                    return 'sent'
+                    return _SendResult('sent')
 
                 except TelegramRetryAfter as e:
                     wait_seconds = e.retry_after + 1
                     flood_wait_until = asyncio.get_event_loop().time() + wait_seconds
+                    last_error = _classify_send_exception(e)
                     logger.warning(
                         'FloodWait рассылки : Telegram просит сек (user попытка /)',
                         broadcast_id=broadcast_id,
@@ -319,18 +388,16 @@ class BroadcastService:
                     )
                     await asyncio.sleep(wait_seconds)
 
-                except TelegramForbiddenError:
-                    return 'blocked'
+                except TelegramForbiddenError as e:
+                    return _classify_send_exception(e)
 
                 except TelegramBadRequest as e:
-                    err = str(e).lower()
-                    if 'bot was blocked' in err or 'user is deactivated' in err or 'chat not found' in err:
-                        return 'blocked'
-                    return 'failed'
+                    return _classify_send_exception(e)
 
                 except (TelegramNetworkError, TelegramServerError) as exc:
                     # Транзиентные сетевые/5xx — warning, не error (иначе спам в админ-чат
                     # через TelegramNotifierProcessor при каждом ConnectionReset).
+                    last_error = _classify_send_exception(exc)
                     logger.warning(
                         'Транзиентная сетевая ошибка рассылки (retry)',
                         broadcast_id=broadcast_id,
@@ -344,6 +411,7 @@ class BroadcastService:
                         await asyncio.sleep(0.5 * (attempt + 1))
 
                 except Exception as exc:
+                    last_error = _classify_send_exception(exc)
                     logger.error(
                         'Ошибка отправки рассылки пользователю (попытка /)',
                         broadcast_id=broadcast_id,
@@ -355,12 +423,13 @@ class BroadcastService:
                     if attempt < _TG_MAX_RETRIES - 1:
                         await asyncio.sleep(0.5 * (attempt + 1))
 
-            return 'failed'
+            return last_error
 
         for i in range(0, len(recipient_ids), _TG_BATCH_SIZE):
             if cancel_event.is_set():
-                await self._mark_cancelled(broadcast_id, sent_count, failed_count, blocked_count)
-                return sent_count, failed_count, blocked_count, True
+                summary = _build_error_summary(error_counts, error_samples)
+                await self._mark_cancelled(broadcast_id, sent_count, failed_count, blocked_count, summary)
+                return sent_count, failed_count, blocked_count, True, summary
 
             batch = recipient_ids[i : i + _TG_BATCH_SIZE]
             results = await asyncio.gather(
@@ -369,16 +438,18 @@ class BroadcastService:
             )
 
             for idx, result in enumerate(results):
-                if isinstance(result, str):
-                    if result == 'sent':
+                if isinstance(result, _SendResult):
+                    if result.status == 'sent':
                         sent_count += 1
-                    elif result == 'blocked':
+                    elif result.status == 'blocked':
                         blocked_count += 1
                         blocked_telegram_ids.append(batch[idx])
                     else:
                         failed_count += 1
+                    record_error(result)
                 elif isinstance(result, Exception):
                     failed_count += 1
+                    error_counts[ERR_UNEXPECTED] = error_counts.get(ERR_UNEXPECTED, 0) + 1
                     logger.error('Необработанное исключение в рассылке', broadcast_id=broadcast_id, result=result)
 
             # Обновляем прогресс в БД периодически
@@ -395,7 +466,7 @@ class BroadcastService:
             # Задержка между батчами для rate limiting
             await asyncio.sleep(_TG_BATCH_DELAY)
 
-        return sent_count, failed_count, blocked_count, False
+        return sent_count, failed_count, blocked_count, False, _build_error_summary(error_counts, error_samples)
 
     def _build_keyboard(
         self,
@@ -453,6 +524,7 @@ class BroadcastService:
         blocked_count: int = 0,
         *,
         cancelled: bool,
+        error_summary: dict | None = None,
     ) -> None:
         await self._safe_status_update(
             broadcast_id,
@@ -462,6 +534,7 @@ class BroadcastService:
             status='cancelled'
             if cancelled
             else ('completed' if failed_count == 0 and blocked_count == 0 else 'partial'),
+            error_summary=error_summary,
         )
 
     async def _mark_cancelled(
@@ -470,6 +543,7 @@ class BroadcastService:
         sent_count: int,
         failed_count: int,
         blocked_count: int = 0,
+        error_summary: dict | None = None,
     ) -> None:
         await self._mark_finished(
             broadcast_id,
@@ -477,6 +551,7 @@ class BroadcastService:
             failed_count,
             blocked_count,
             cancelled=True,
+            error_summary=error_summary,
         )
 
     async def _mark_failed(
@@ -485,6 +560,7 @@ class BroadcastService:
         sent_count: int = 0,
         failed_count: int = 0,
         blocked_count: int = 0,
+        error_summary: dict | None = None,
     ) -> None:
         await self._safe_status_update(
             broadcast_id,
@@ -492,6 +568,7 @@ class BroadcastService:
             failed_count,
             blocked_count,
             status='failed',
+            error_summary=error_summary,
         )
 
     async def _update_progress(
@@ -521,6 +598,7 @@ class BroadcastService:
         *,
         status: str,
         update_completed_at: bool = True,
+        error_summary: dict | None = None,
     ) -> None:
         attempts = 0
 
@@ -535,6 +613,9 @@ class BroadcastService:
                     broadcast.failed_count = failed_count
                     broadcast.blocked_count = blocked_count
                     broadcast.status = status
+
+                    if error_summary is not None:
+                        broadcast.error_summary = error_summary
 
                     if update_completed_at:
                         broadcast.completed_at = datetime.now(UTC)

@@ -153,6 +153,9 @@ class BroadcastResponse(BaseModel):
     email_subject: str | None = None
     email_html_content: str | None = None
 
+    # {'counts': {error_key: int}, 'samples': [str]} | None — диагностика провалов рассылки
+    error_summary: dict | None = None
+
     class Config:
         from_attributes = True
 

@@ -145,6 +145,7 @@ def _serialize_broadcast(broadcast: BroadcastHistory) -> BroadcastResponse:
         channel=getattr(broadcast, 'channel', 'telegram') or 'telegram',
         email_subject=getattr(broadcast, 'email_subject', None),
         email_html_content=getattr(broadcast, 'email_html_content', None),
+        error_summary=getattr(broadcast, 'error_summary', None),
     )
 
 

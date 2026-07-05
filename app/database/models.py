@@ -2983,6 +2983,8 @@ class BroadcastHistory(Base):
     sent_count = Column(Integer, default=0)
     failed_count = Column(Integer, default=0)
     blocked_count = Column(Integer, default=0)
+    # {'counts': {error_key: int}, 'samples': [str]} | None — только Telegram, только при ошибках
+    error_summary = Column(JSON, nullable=True)
     status = Column(String(50), default='in_progress')
     admin_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     admin_name = Column(String(255))
