@@ -4287,3 +4287,43 @@ class UserDeviceAlias(Base):
     alias = Column(String(64), nullable=False)
     created_at = Column(AwareDateTime(), server_default=func.now(), nullable=False)
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class LifecycleRule(Base):
+    """Конфигурируемое правило lifecycle-рассылок.
+
+    Заменяет on-disk JSON у `NotificationSettingsService`: `enabled` — отдельная
+    колонка, `config` — JSON-блоб таймингов/процентов/текстов (всё настраивается
+    клиентом через кабинет, ничего не хардкодится в коде). Дефолты живут в
+    реестре `app/services/lifecycle_rules.py` — строка в этой таблице является
+    ОВЕРРАЙДОМ поверх дефолта, а не полным набором настроек.
+    """
+
+    __tablename__ = 'lifecycle_rules'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(64), nullable=False, unique=True, index=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    config = Column(JSON, nullable=False, default=dict)
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+
+class LifecycleMessageLog(Base):
+    """Журнал отправок lifecycle-сообщений — дедуп и лимиты повторов.
+
+    Одна строка = один факт отправки правила `rule_key` пользователю на шаге
+    `occurrence` (номер повтора/ступени). UNIQUE(user_id, rule_key, occurrence)
+    гарантирует, что триггер (задача C2) не отправит один и тот же шаг дважды.
+    """
+
+    __tablename__ = 'lifecycle_message_log'
+    __table_args__ = (
+        UniqueConstraint('user_id', 'rule_key', 'occurrence', name='uq_lifecycle_log_user_rule_occurrence'),
+        Index('ix_lifecycle_log_rule_sent', 'rule_key', 'sent_at'),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    rule_key = Column(String(64), nullable=False)
+    occurrence = Column(Integer, nullable=False, default=1)
+    sent_at = Column(AwareDateTime(), default=func.now())

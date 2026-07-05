@@ -297,6 +297,19 @@ async def main():
                 stage.warning(f'Не удалось загрузить конфигурацию: {error}')
                 logger.error('❌ Не удалось загрузить конфигурацию', error=error)
 
+        async with timeline.stage(
+            'Загрузка lifecycle-правил уведомлений',
+            '🔔',
+            success_message='Lifecycle-правила загружены',
+        ) as stage:
+            try:
+                from app.services.notification_settings_service import NotificationSettingsService
+
+                await NotificationSettingsService.reload()
+            except Exception as error:
+                stage.warning(f'Не удалось загрузить lifecycle-правила: {error}')
+                logger.error('❌ Не удалось загрузить lifecycle-правила', error=error)
+
         bot = None
         dp = None
         async with timeline.stage('Настройка бота', '🤖', success_message='Бот настроен') as stage:
