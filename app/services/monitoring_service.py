@@ -201,6 +201,7 @@ class MonitoringService:
         self._notified_users: set[str] = set()
         self._last_cleanup = datetime.now(UTC)
         self._sla_task = None
+        self._lifecycle_task = None
         # In-memory fallback состояния уведомлений об ошибке автоплатежа (на случай
         # недоступности Redis). Ключ — (subscription_id, cycle_token=int(end_date.timestamp())).
         self._autopay_fail_state: dict[tuple[int, int], dict] = {}
@@ -323,6 +324,12 @@ class MonitoringService:
         except Exception as e:
             logger.error('Не удалось запустить SLA-мониторинг', error=e)
 
+        try:
+            if not self._lifecycle_task or self._lifecycle_task.done():
+                self._lifecycle_task = asyncio.create_task(self._lifecycle_loop())
+        except Exception as e:
+            logger.error('Не удалось запустить lifecycle-триггеры', error=e)
+
         while self.is_running:
             try:
                 await self._monitoring_cycle()
@@ -338,6 +345,11 @@ class MonitoringService:
         try:
             if self._sla_task and not self._sla_task.done():
                 self._sla_task.cancel()
+        except Exception:
+            pass
+        try:
+            if self._lifecycle_task and not self._lifecycle_task.done():
+                self._lifecycle_task.cancel()
         except Exception:
             pass
 
@@ -2745,6 +2757,28 @@ class MonitoringService:
                 break
             except Exception as e:
                 logger.error('Ошибка в SLA-цикле', error=e)
+            await asyncio.sleep(interval_seconds)
+
+    async def _lifecycle_loop(self):
+        from app.services.lifecycle_trigger_service import run_lifecycle_triggers
+
+        try:
+            interval_minutes = max(1, int(getattr(settings, 'LIFECYCLE_TRIGGERS_INTERVAL_MINUTES', 20)))
+        except Exception:
+            interval_minutes = 20
+        interval_seconds = interval_minutes * 60
+        while self.is_running:
+            try:
+                async with AsyncSessionLocal() as db:
+                    try:
+                        await run_lifecycle_triggers(db, self._send_message_with_logo)
+                    except Exception as e:
+                        logger.error('Ошибка в цикле lifecycle-триггеров', error=e)
+                        await db.rollback()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error('Ошибка в lifecycle-цикле', error=e)
             await asyncio.sleep(interval_seconds)
 
     async def _log_monitoring_event(

@@ -413,6 +413,10 @@ class Settings(BaseSettings):
     # per-send логов). Этот таймаут даёт быстрый предсказуемый предел: на TimeoutError
     # получатель пропускается, цикл продолжается.
     MONITORING_NOTIFICATION_SEND_TIMEOUT: float = 20.0
+    # Каденс отдельного прогона lifecycle-триггеров (минуты); дефолт чаще MONITORING_INTERVAL=60.
+    LIFECYCLE_TRIGGERS_INTERVAL_MINUTES: int = 20
+    # Потолок отправок на одно правило за прогон — защита от burst-флуда.
+    LIFECYCLE_TRIGGERS_BATCH_LIMIT: int = 100
     LOW_BALANCE_ALERT_EXPIRY_DAYS: int = 3  # Only alert when subscription expires within N days
     # Months of inactivity before a user row is soft-deleted (status=DELETED).
     # 12 months is conservative — VPN users are highly seasonal (vacations,
