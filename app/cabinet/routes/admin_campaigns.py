@@ -1,19 +1,25 @@
 """Admin routes for managing advertising campaigns in cabinet."""
 
+import csv
+import io
+import re
 from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from fastapi.responses import StreamingResponse
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cabinet.utils.links import get_campaign_deep_link, get_campaign_web_link
 from app.database.crud.campaign import (
+    CampaignAggregateStats,
     create_campaign,
     delete_campaign,
     get_campaign_by_id,
     get_campaign_by_start_parameter,
     get_campaign_statistics,
+    get_campaigns_aggregate_stats,
     get_campaigns_count,
     get_campaigns_list,
     get_campaigns_overview,
@@ -24,6 +30,7 @@ from app.database.crud.tariff import get_all_tariffs
 from app.database.models import (
     AdvertisingCampaign,
     AdvertisingCampaignRegistration,
+    AdvertisingCampaignStart,
     PartnerStatus,
     Subscription,
     Tariff,
@@ -35,6 +42,15 @@ from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.campaigns import (
     AdminCampaignChartDataResponse,
     AvailablePartnerItem,
+    BulkCampaignCreateRequest,
+    BulkCampaignCreateResponse,
+    BulkCampaignDeletableItem,
+    BulkCampaignDeleteRequest,
+    BulkCampaignDeleteResponse,
+    BulkCampaignDeleteSkippedItem,
+    BulkCampaignItem,
+    BulkCampaignSkippedItem,
+    BulkCampaignSummary,
     CampaignCreateRequest,
     CampaignDetailResponse,
     CampaignListItem,
@@ -55,6 +71,72 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/admin/campaigns', tags=['Cabinet Admin Campaigns'])
 
+# start_parameter contract (matches CampaignCreateRequest Field pattern + String(64) column).
+_START_PARAMETER_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+_MAX_NAME_LENGTH = 255
+
+_SKIP_INVALID_NAME = 'invalid_name'
+_SKIP_INVALID_START_PARAMETER = 'invalid_start_parameter'
+_SKIP_DUPLICATE_EXISTING = 'duplicate_existing'
+_SKIP_DUPLICATE_IN_BATCH = 'duplicate_in_batch'
+
+
+def _partition_bulk_items(
+    items: list[BulkCampaignItem],
+    existing_parameters: set[str],
+) -> tuple[list[BulkCampaignItem], list[BulkCampaignSkippedItem]]:
+    valid: list[BulkCampaignItem] = []
+    skipped: list[BulkCampaignSkippedItem] = []
+    seen: set[str] = set()
+
+    for item in items:
+        reason = _classify_bulk_item(item, existing_parameters, seen)
+        if reason is not None:
+            skipped.append(
+                BulkCampaignSkippedItem(name=item.name, start_parameter=item.start_parameter, reason=reason)
+            )
+            continue
+        seen.add(item.start_parameter)
+        valid.append(item)
+
+    return valid, skipped
+
+
+def _classify_bulk_item(
+    item: BulkCampaignItem,
+    existing_parameters: set[str],
+    seen: set[str],
+) -> str | None:
+    if not item.name or len(item.name) > _MAX_NAME_LENGTH:
+        return _SKIP_INVALID_NAME
+    if not _START_PARAMETER_RE.match(item.start_parameter):
+        return _SKIP_INVALID_START_PARAMETER
+    if item.start_parameter in existing_parameters:
+        return _SKIP_DUPLICATE_EXISTING
+    if item.start_parameter in seen:
+        return _SKIP_DUPLICATE_IN_BATCH
+    return None
+
+
+async def _count_rows_by_campaign(
+    db: AsyncSession,
+    model: type[AdvertisingCampaignRegistration] | type[AdvertisingCampaignStart],
+    campaign_ids: list[int],
+) -> dict[int, int]:
+    """Count child rows grouped by campaign_id in one query (never a per-campaign loop).
+
+    Empty input short-circuits without touching the DB. Campaigns with no child rows
+    are simply absent from the result; callers default them to 0.
+    """
+    if not campaign_ids:
+        return {}
+    result = await db.execute(
+        select(model.campaign_id, func.count(model.id))
+        .where(model.campaign_id.in_(campaign_ids))
+        .group_by(model.campaign_id)
+    )
+    return {campaign_id: count for campaign_id, count in result.all()}
+
 
 def _safe_div(value: float | None, divisor: int = 100) -> float:
     """Safely divide kopeks to rubles, handling None values."""
@@ -67,6 +149,7 @@ def _get_partner_name(campaign: AdvertisingCampaign) -> str | None:
         return None
     partner = campaign.partner
     return partner.first_name or partner.username or f'#{partner.id}'
+
 
 
 @router.get('/overview', response_model=CampaignsOverviewResponse)
@@ -473,6 +556,174 @@ async def create_new_campaign(
     logger.info('Admin created campaign', admin_id=admin.id, campaign_id=campaign.id, campaign_name=campaign.name)
 
     return await get_campaign(campaign.id, admin, db)
+
+
+@router.post('/bulk', response_model=BulkCampaignCreateResponse)
+async def create_campaigns_bulk(
+    request: BulkCampaignCreateRequest,
+    admin: User = Depends(require_permission('campaigns:create')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Create up to 500 campaigns from labels in one transaction; invalid/duplicate items are skipped."""
+    defaults = request.defaults
+
+    if defaults.bonus_type == 'tariff':
+        if not defaults.tariff_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Tariff ID is required for tariff bonus type',
+            )
+        tariff_result = await db.execute(select(Tariff).where(Tariff.id == defaults.tariff_id))
+        if tariff_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Tariff not found',
+            )
+
+    candidate_parameters = {item.start_parameter for item in request.items if item.start_parameter}
+    existing_parameters: set[str] = set()
+    if candidate_parameters:
+        existing_result = await db.execute(
+            select(AdvertisingCampaign.start_parameter).where(
+                AdvertisingCampaign.start_parameter.in_(candidate_parameters)
+            )
+        )
+        existing_parameters = set(existing_result.scalars().all())
+
+    valid_items, skipped = _partition_bulk_items(request.items, existing_parameters)
+
+    created_models: list[AdvertisingCampaign] = []
+    for item in valid_items:
+        campaign = AdvertisingCampaign(
+            name=item.name,
+            start_parameter=item.start_parameter,
+            bonus_type=defaults.bonus_type,
+            balance_bonus_kopeks=defaults.balance_bonus_kopeks or 0,
+            subscription_duration_days=defaults.subscription_duration_days,
+            subscription_traffic_gb=defaults.subscription_traffic_gb,
+            subscription_device_limit=defaults.subscription_device_limit,
+            subscription_squads=defaults.subscription_squads or [],
+            tariff_id=defaults.tariff_id,
+            tariff_duration_days=defaults.tariff_duration_days,
+            created_by=admin.id,
+            is_active=defaults.is_active,
+        )
+        db.add(campaign)
+        created_models.append(campaign)
+
+    if created_models:
+        await db.flush()
+
+    created = [
+        BulkCampaignSummary(id=campaign.id, name=campaign.name, start_parameter=campaign.start_parameter)
+        for campaign in created_models
+    ]
+
+    await db.commit()
+
+    logger.info(
+        'Admin bulk-created campaigns',
+        admin_id=admin.id,
+        created_count=len(created),
+        skipped_count=len(skipped),
+    )
+
+    return BulkCampaignCreateResponse(
+        created=created,
+        skipped=skipped,
+        created_count=len(created),
+        skipped_count=len(skipped),
+    )
+
+
+@router.post('/bulk-delete', response_model=BulkCampaignDeleteResponse)
+async def delete_campaigns_bulk(
+    request: BulkCampaignDeleteRequest,
+    admin: User = Depends(require_permission('campaigns:delete')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Mass-delete up to 500 campaigns, with a non-destructive dry-run preview.
+
+    Resolves which ids exist (unknown ids -> `skipped`, reason `not_found`) and counts
+    the related rows the FK CASCADE will remove -- registrations and starts -- via one
+    grouped query each, BEFORE deleting. `dry_run=true` returns those counts and deletes
+    nothing (the frontend renders the confirmation from them). `dry_run=false` deletes the
+    campaigns in a single transaction (the DB `ON DELETE CASCADE` removes their
+    registrations/starts) and additionally returns `deleted_count`.
+
+    Declared before the `/{campaign_id}` param routes to keep the file's literal-before-
+    param ordering discipline. Unlike single-delete, this cascades registrations by design.
+    """
+    requested_ids = list(dict.fromkeys(request.ids))
+
+    existing_result = await db.execute(
+        select(
+            AdvertisingCampaign.id,
+            AdvertisingCampaign.name,
+            AdvertisingCampaign.start_parameter,
+        ).where(AdvertisingCampaign.id.in_(requested_ids))
+    )
+    existing_by_id = {row.id: row for row in existing_result.all()}
+    existing_ids = [campaign_id for campaign_id in requested_ids if campaign_id in existing_by_id]
+
+    registrations_by_id = await _count_rows_by_campaign(db, AdvertisingCampaignRegistration, existing_ids)
+    starts_by_id = await _count_rows_by_campaign(db, AdvertisingCampaignStart, existing_ids)
+
+    deletable = [
+        BulkCampaignDeletableItem(
+            id=campaign_id,
+            name=existing_by_id[campaign_id].name,
+            start_parameter=existing_by_id[campaign_id].start_parameter,
+            registrations=registrations_by_id.get(campaign_id, 0),
+            starts=starts_by_id.get(campaign_id, 0),
+        )
+        for campaign_id in existing_ids
+    ]
+    skipped = [
+        BulkCampaignDeleteSkippedItem(id=campaign_id, reason='not_found')
+        for campaign_id in requested_ids
+        if campaign_id not in existing_by_id
+    ]
+    total_registrations = sum(item.registrations for item in deletable)
+    total_starts = sum(item.starts for item in deletable)
+
+    if request.dry_run:
+        logger.info(
+            'Admin previewed bulk campaign delete',
+            admin_id=admin.id,
+            deletable_count=len(deletable),
+            skipped_count=len(skipped),
+            total_registrations=total_registrations,
+            total_starts=total_starts,
+        )
+        return BulkCampaignDeleteResponse(
+            deletable=deletable,
+            skipped=skipped,
+            total_registrations=total_registrations,
+            total_starts=total_starts,
+            deleted_count=None,
+        )
+
+    if existing_ids:
+        await db.execute(delete(AdvertisingCampaign).where(AdvertisingCampaign.id.in_(existing_ids)))
+    await db.commit()
+
+    logger.info(
+        'Admin bulk-deleted campaigns',
+        admin_id=admin.id,
+        deleted_count=len(existing_ids),
+        skipped_count=len(skipped),
+        registrations_removed=total_registrations,
+        starts_removed=total_starts,
+    )
+
+    return BulkCampaignDeleteResponse(
+        deletable=deletable,
+        skipped=skipped,
+        total_registrations=total_registrations,
+        total_starts=total_starts,
+        deleted_count=len(existing_ids),
+    )
 
 
 @router.put('/{campaign_id}', response_model=CampaignDetailResponse)

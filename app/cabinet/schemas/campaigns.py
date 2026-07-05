@@ -117,6 +117,106 @@ class CampaignUpdateRequest(BaseModel):
     partner_user_id: int | None = None
 
 
+BulkSkipReason = Literal['invalid_name', 'invalid_start_parameter', 'duplicate_existing', 'duplicate_in_batch']
+
+
+class BulkCampaignItem(BaseModel):
+    """One campaign label; loose by design — invalid items are skipped, not 422'd."""
+
+    name: str
+    start_parameter: str
+
+
+class BulkCampaignDefaults(BaseModel):
+    """Shared bonus config applied to every item in a bulk create."""
+
+    bonus_type: CampaignBonusType = 'none'
+    is_active: bool = True
+    # Balance bonus
+    balance_bonus_kopeks: int = Field(0, ge=0)
+    # Subscription bonus
+    subscription_duration_days: int | None = Field(None, ge=1)
+    subscription_traffic_gb: int | None = Field(None, ge=0)
+    subscription_device_limit: int | None = Field(None, ge=1)
+    subscription_squads: list[str] = Field(default_factory=list)
+    # Tariff bonus
+    tariff_id: int | None = None
+    tariff_duration_days: int | None = Field(None, ge=1)
+
+
+class BulkCampaignCreateRequest(BaseModel):
+    """Request to create up to 500 campaigns from a list of labels."""
+
+    items: list[BulkCampaignItem] = Field(..., max_length=500)
+    defaults: BulkCampaignDefaults = Field(default_factory=BulkCampaignDefaults)
+
+
+class BulkCampaignSummary(BaseModel):
+    """Compact summary of a campaign created in a bulk request."""
+
+    id: int
+    name: str
+    start_parameter: str
+
+
+class BulkCampaignSkippedItem(BaseModel):
+    """A bulk item that was not created, with the reason why."""
+
+    name: str
+    start_parameter: str
+    reason: BulkSkipReason
+
+
+class BulkCampaignCreateResponse(BaseModel):
+    """Result of a bulk campaign creation."""
+
+    created: list[BulkCampaignSummary]
+    skipped: list[BulkCampaignSkippedItem]
+    created_count: int
+    skipped_count: int
+
+
+BulkDeleteSkipReason = Literal['not_found']
+
+
+class BulkCampaignDeleteRequest(BaseModel):
+    """Request to mass-delete campaigns, optionally as a non-destructive dry-run preview."""
+
+    ids: list[int] = Field(..., min_length=1, max_length=500)
+    dry_run: bool = False
+
+
+class BulkCampaignDeletableItem(BaseModel):
+    """A resolvable campaign that would be (dry-run) or was deleted, with its cascade impact."""
+
+    id: int
+    name: str
+    start_parameter: str
+    registrations: int
+    starts: int
+
+
+class BulkCampaignDeleteSkippedItem(BaseModel):
+    """A requested id that did not resolve to a campaign."""
+
+    id: int
+    reason: BulkDeleteSkipReason
+
+
+class BulkCampaignDeleteResponse(BaseModel):
+    """Result of a bulk delete (dry-run preview or real deletion).
+
+    On a dry-run `deleted_count` is None; on a real deletion it holds the number of
+    campaigns removed (the FK CASCADE additionally removes their registrations/starts).
+    """
+
+    deletable: list[BulkCampaignDeletableItem]
+    skipped: list[BulkCampaignDeleteSkippedItem]
+    total_registrations: int
+    total_starts: int
+    deleted_count: int | None = None
+
+
 class CampaignToggleResponse(BaseModel):
     """Response after toggling campaign."""
 
