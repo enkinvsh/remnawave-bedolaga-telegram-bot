@@ -142,9 +142,7 @@ async def test_combined_telegram_preflight_failure_returns_422_no_row(monkeypatc
     preflight = AsyncMock(side_effect=BroadcastPreflightError('invalid_media', 'dead file'))
     _wire(monkeypatch, bot=MagicMock(), preflight=preflight)
     db = _FakeSession()
-    request = CombinedBroadcastCreateRequest(
-        channel='telegram', target='all', message_text='<b>x', selected_buttons=[]
-    )
+    request = CombinedBroadcastCreateRequest(channel='telegram', target='all', message_text='<b>x', selected_buttons=[])
 
     with pytest.raises(HTTPException) as exc:
         await m.create_combined_broadcast(request, _admin(), db)

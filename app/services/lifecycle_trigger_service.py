@@ -252,9 +252,7 @@ async def select_post_trial_ladder(
         if match is not None:
             occurrence, step = match
             candidates.append(
-                LifecycleCandidate(
-                    user=subscription.user, occurrence=occurrence, subscription=subscription, step=step
-                )
+                LifecycleCandidate(user=subscription.user, occurrence=occurrence, subscription=subscription, step=step)
             )
     return candidates
 

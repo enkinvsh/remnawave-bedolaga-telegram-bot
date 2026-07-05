@@ -112,9 +112,7 @@ async def test_update_invalid_config_returns_422(monkeypatch):
     payload = m.LifecycleRuleUpdate(enabled=True, config={'discount_percent': 200})
 
     with pytest.raises(HTTPException) as exc:
-        await m.update_lifecycle_rule(
-            key='expired_second_wave', payload=payload, admin=MagicMock(id=1), db=AsyncMock()
-        )
+        await m.update_lifecycle_rule(key='expired_second_wave', payload=payload, admin=MagicMock(id=1), db=AsyncMock())
 
     assert exc.value.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
     upsert.assert_not_awaited()  # не пишем при провале валидации

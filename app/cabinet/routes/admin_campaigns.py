@@ -92,9 +92,7 @@ def _partition_bulk_items(
     for item in items:
         reason = _classify_bulk_item(item, existing_parameters, seen)
         if reason is not None:
-            skipped.append(
-                BulkCampaignSkippedItem(name=item.name, start_parameter=item.start_parameter, reason=reason)
-            )
+            skipped.append(BulkCampaignSkippedItem(name=item.name, start_parameter=item.start_parameter, reason=reason))
             continue
         seen.add(item.start_parameter)
         valid.append(item)
