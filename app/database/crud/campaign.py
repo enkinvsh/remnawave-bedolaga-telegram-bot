@@ -1,11 +1,13 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.database.crud.campaign_starts import get_campaign_start_counts
 from app.database.crud.transaction import REAL_PAYMENT_METHODS
 from app.database.models import (
     AdvertisingCampaign,
@@ -20,6 +22,36 @@ from app.database.models import (
 
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class CampaignAggregateStats:
+    """Presentation-agnostic funnel aggregates for a single advertising campaign.
+
+    Raw domain numbers only (kopeks, not rubles; no formatted link) so one payload
+    can feed both the CSV export and the admin stats dashboard.
+
+    `trial_activated` is BEST-EFFORT: the bot's traffic accounting is known to be
+    inconsistent (the panel sometimes sees usage the bot does not), so this counts a
+    trial user as activated on ANY traffic evidence — a trial subscription with
+    ``traffic_used_gb > 0`` OR a user ``lifetime_used_traffic_bytes > 0`` — and may
+    under- or over-count at the margins.
+    """
+
+    campaign_id: int
+    name: str
+    start_parameter: str
+    bonus_type: str
+    is_active: bool
+    created_at: datetime | None
+    updated_at: datetime | None
+    starts_total: int
+    starts_unique: int
+    registrations: int
+    trial_users: int
+    trial_activated: int
+    paying_users: int
+    total_amount_kopeks: int
 
 
 async def create_campaign(
@@ -446,6 +478,115 @@ async def get_campaign_statistics(
         'avg_revenue_per_user_kopeks': avg_revenue_per_user,
         'avg_first_payment_kopeks': avg_first_payment,
     }
+
+
+async def get_campaigns_aggregate_stats(
+    db: AsyncSession,
+    campaign_ids: list[int] | None = None,
+) -> list[CampaignAggregateStats]:
+    """Compute per-campaign funnel aggregates in a FIXED number of grouped queries.
+
+    Args:
+        campaign_ids: restrict to these campaigns; ``None`` means every campaign
+            (active AND inactive). An empty list yields an empty result.
+
+    Never loops per-campaign: starts, registrations, the trial funnel and
+    paying/revenue are each ONE ``GROUP BY`` query over the whole id set, then
+    stitched onto the campaign rows with ``(0, 0, ...)`` fallbacks so a campaign
+    with zero activity still produces a complete row. Reused by the CSV export and
+    the stats dashboard, hence the presentation-agnostic return type.
+    """
+    campaigns_stmt = select(AdvertisingCampaign)
+    if campaign_ids is not None:
+        campaigns_stmt = campaigns_stmt.where(AdvertisingCampaign.id.in_(campaign_ids))
+    campaigns_stmt = campaigns_stmt.order_by(AdvertisingCampaign.created_at.desc())
+
+    campaigns = (await db.execute(campaigns_stmt)).scalars().all()
+    if not campaigns:
+        return []
+
+    ids = [campaign.id for campaign in campaigns]
+
+    # Reuse the coalesce(telegram_id, -user_id) identity logic owned by the starts table.
+    start_counts = await get_campaign_start_counts(db, ids)
+
+    registrations_rows = await db.execute(
+        select(
+            AdvertisingCampaignRegistration.campaign_id,
+            func.count(AdvertisingCampaignRegistration.id),
+        )
+        .where(AdvertisingCampaignRegistration.campaign_id.in_(ids))
+        .group_by(AdvertisingCampaignRegistration.campaign_id)
+    )
+    registrations_by_campaign = {row[0]: row[1] or 0 for row in registrations_rows.all()}
+
+    # INNER JOIN User cannot drop trial_users rows (registration.user_id is a FK); it
+    # exists only to expose lifetime_used_traffic_bytes for the activation test.
+    activated = or_(
+        Subscription.traffic_used_gb > 0,
+        User.lifetime_used_traffic_bytes > 0,
+    )
+    trial_rows = await db.execute(
+        select(
+            AdvertisingCampaignRegistration.campaign_id,
+            func.count(func.distinct(AdvertisingCampaignRegistration.user_id)),
+            func.count(func.distinct(case((activated, AdvertisingCampaignRegistration.user_id)))),
+        )
+        .select_from(AdvertisingCampaignRegistration)
+        .join(Subscription, Subscription.user_id == AdvertisingCampaignRegistration.user_id)
+        .join(User, User.id == AdvertisingCampaignRegistration.user_id)
+        .where(
+            AdvertisingCampaignRegistration.campaign_id.in_(ids),
+            Subscription.is_trial.is_(True),
+        )
+        .group_by(AdvertisingCampaignRegistration.campaign_id)
+    )
+    trial_by_campaign = {row[0]: (row[1] or 0, row[2] or 0) for row in trial_rows.all()}
+
+    # Deposit semantics mirror get_campaign_statistics; duplicated on purpose to leave
+    # that function untouched for its other consumers.
+    paying_rows = await db.execute(
+        select(
+            AdvertisingCampaignRegistration.campaign_id,
+            func.count(func.distinct(Transaction.user_id)),
+            func.coalesce(func.sum(Transaction.amount_kopeks), 0),
+        )
+        .select_from(AdvertisingCampaignRegistration)
+        .join(Transaction, Transaction.user_id == AdvertisingCampaignRegistration.user_id)
+        .where(
+            AdvertisingCampaignRegistration.campaign_id.in_(ids),
+            Transaction.type == TransactionType.DEPOSIT.value,
+            Transaction.is_completed.is_(True),
+            Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
+        )
+        .group_by(AdvertisingCampaignRegistration.campaign_id)
+    )
+    paying_by_campaign = {row[0]: (row[1] or 0, int(row[2] or 0)) for row in paying_rows.all()}
+
+    stats: list[CampaignAggregateStats] = []
+    for campaign in campaigns:
+        starts_total, starts_unique = start_counts.get(campaign.id, (0, 0))
+        trial_users, trial_activated = trial_by_campaign.get(campaign.id, (0, 0))
+        paying_users, total_amount_kopeks = paying_by_campaign.get(campaign.id, (0, 0))
+        stats.append(
+            CampaignAggregateStats(
+                campaign_id=campaign.id,
+                name=campaign.name,
+                start_parameter=campaign.start_parameter,
+                bonus_type=campaign.bonus_type,
+                is_active=campaign.is_active,
+                created_at=campaign.created_at,
+                updated_at=campaign.updated_at,
+                starts_total=starts_total,
+                starts_unique=starts_unique,
+                registrations=registrations_by_campaign.get(campaign.id, 0),
+                trial_users=trial_users,
+                trial_activated=trial_activated,
+                paying_users=paying_users,
+                total_amount_kopeks=total_amount_kopeks,
+            )
+        )
+    return stats
 
 
 async def get_campaigns_overview(db: AsyncSession) -> dict[str, int]:

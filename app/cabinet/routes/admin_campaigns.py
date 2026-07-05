@@ -151,6 +151,82 @@ def _get_partner_name(campaign: AdvertisingCampaign) -> str | None:
     return partner.first_name or partner.username or f'#{partner.id}'
 
 
+_EXPORT_CSV_COLUMNS = [
+    'name',
+    'start_parameter',
+    'link',
+    'bonus_type',
+    'is_active',
+    'starts_total',
+    'starts_unique',
+    'registrations',
+    'trial_users',
+    'trial_activated',
+    'paying_users',
+    'total_amount_rub',
+    'created_at',
+    'updated_at',
+]
+
+
+def _sanitize_csv_cell(value: str) -> str:
+    """Prevent CSV formula injection by prefixing dangerous leading characters."""
+    if value and value[0] in ('=', '+', '-', '@', '\t', '\r'):
+        return f"'{value}"
+    return value
+
+
+def _parse_export_campaign_ids(ids: str | None) -> list[int] | None:
+    """Parse the `ids` query param into campaign ids.
+
+    None/blank -> None (every campaign). A present-but-numberless value (e.g. ",,")
+    -> [] (explicit empty selection). Any non-integer chunk -> HTTP 400.
+    """
+    if ids is None or not ids.strip():
+        return None
+    parsed: list[int] = []
+    for chunk in ids.split(','):
+        piece = chunk.strip()
+        if not piece:
+            continue
+        try:
+            parsed.append(int(piece))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f'Invalid campaign id: {piece!r}',
+            )
+    return parsed
+
+
+def _campaigns_to_csv(rows: list[CampaignAggregateStats]) -> str:
+    """Serialize campaign funnel aggregates to a formula-injection-safe CSV string."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(_EXPORT_CSV_COLUMNS)
+
+    for row in rows:
+        writer.writerow(
+            [
+                _sanitize_csv_cell(row.name),
+                _sanitize_csv_cell(row.start_parameter),
+                _sanitize_csv_cell(get_campaign_deep_link(row.start_parameter)),
+                row.bonus_type,
+                row.is_active,
+                row.starts_total,
+                row.starts_unique,
+                row.registrations,
+                row.trial_users,
+                row.trial_activated,
+                row.paying_users,
+                f'{row.total_amount_kopeks / 100:.2f}',
+                row.created_at.isoformat() if row.created_at else '',
+                row.updated_at.isoformat() if row.updated_at else '',
+            ]
+        )
+
+    return output.getvalue()
+
 
 @router.get('/overview', response_model=CampaignsOverviewResponse)
 async def get_overview(
@@ -289,6 +365,38 @@ async def list_campaigns(
         )
 
     return CampaignListResponse(campaigns=items, total=total)
+
+
+@router.get('/export')
+async def export_campaigns_csv(
+    admin: User = Depends(require_permission('campaigns:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+    ids: str | None = Query(default=None, description='Comma-separated campaign ids; absent = all campaigns'),
+    search: str | None = Query(default=None, description='Substring filter on name / start_parameter'),
+):
+    """Export campaign funnel analytics as CSV (all campaigns, or a selected/filtered subset).
+
+    Declared before `/{campaign_id}` so FastAPI matches the literal path instead of
+    treating "export" as a campaign id.
+    """
+    campaign_ids = _parse_export_campaign_ids(ids)
+    rows = await get_campaigns_aggregate_stats(db, campaign_ids)
+
+    if search:
+        needle = search.strip().lower()
+        rows = [row for row in rows if needle in row.name.lower() or needle in row.start_parameter.lower()]
+
+    csv_content = _campaigns_to_csv(rows)
+    timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
+    filename = f'campaigns_export_{timestamp}.csv'
+
+    logger.info('Admin exported campaigns', admin_id=admin.id, rows=len(rows), filename=filename)
+
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get('/{campaign_id}', response_model=CampaignDetailResponse)
