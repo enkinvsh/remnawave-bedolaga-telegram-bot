@@ -543,6 +543,40 @@ class MonitoringService:
                     )
                     continue
 
+                # Cross-check the panel before expiring+notifying: a transiently
+                # corrupted local end_date (panel desync) must never trigger the
+                # scary "подписка истекла" message when the panel still holds the
+                # user ACTIVE with a future expiry.
+                decision, panel_expire_at = await self._panel_confirms_expiry(subscription)
+                if decision == 'uncertain':
+                    # Fail safe: panel unreachable — defer to the next hourly cycle.
+                    continue
+                if decision == 'false_expiry' and panel_expire_at is not None:
+                    healed = (
+                        panel_expire_at.astimezone(UTC)
+                        if panel_expire_at.tzinfo is not None
+                        else panel_expire_at.replace(tzinfo=UTC)
+                    )
+                    subscription.end_date = healed
+                    await db.commit()
+                    await self._log_monitoring_event(
+                        db,
+                        'false_expiry_prevented',
+                        'Ложное истечение предотвращено: панель считает подписку активной',
+                        {
+                            'subscription_id': subscription.id,
+                            'user_id': subscription.user_id,
+                            'panel_expire_at': healed.isoformat(),
+                        },
+                    )
+                    logger.warning(
+                        '🛡️ Ложное истечение подписки предотвращено — панель считает пользователя активным',
+                        subscription_id=subscription.id,
+                        user_id=subscription.user_id,
+                        healed_end_date=healed.isoformat(),
+                    )
+                    continue
+
                 from app.database.crud.subscription import expire_subscription
 
                 # Capture tariff name before expire_subscription's db.refresh() expires the relationship
@@ -583,6 +617,43 @@ class MonitoringService:
 
         except Exception as e:
             logger.error('Ошибка проверки истёкших подписок', error=e)
+
+    async def _panel_confirms_expiry(self, subscription: Subscription) -> tuple[str, datetime | None]:
+        """Ask the RemnaWave panel whether a locally-expired subscription is truly gone.
+
+        Returns one of:
+          ('proceed', None)      — expire + notify as usual (panel confirms, no uuid,
+                                   panel not configured, or panel returned 404/None).
+          ('false_expiry', dt)   — panel still ACTIVE with future expiry `dt`; caller
+                                   heals the local end_date and stays silent.
+          ('uncertain', None)    — panel fetch failed; caller defers to the next cycle.
+        """
+        uuid = subscription.remnawave_uuid or (
+            subscription.user.remnawave_uuid if getattr(subscription, 'user', None) else None
+        )
+        if not uuid:
+            return ('proceed', None)
+        if not self.subscription_service.is_configured:
+            return ('proceed', None)
+
+        try:
+            async with self.subscription_service.get_api_client() as api:
+                panel_user = await api.get_user_by_uuid(uuid)
+        except Exception as e:
+            logger.warning(
+                'Панель недоступна при проверке истёкшей подписки — откладываем до следующего цикла',
+                subscription_id=subscription.id,
+                error=e,
+            )
+            return ('uncertain', None)
+
+        if panel_user is None:
+            return ('proceed', None)
+
+        now = datetime.now(UTC)
+        if panel_user.status == RemnaWaveUserStatus.ACTIVE and panel_user.expire_at > now + timedelta(seconds=60):
+            return ('false_expiry', panel_user.expire_at)
+        return ('proceed', None)
 
     async def update_remnawave_user(self, db: AsyncSession, subscription: Subscription) -> RemnaWaveUser | None:
         try:
