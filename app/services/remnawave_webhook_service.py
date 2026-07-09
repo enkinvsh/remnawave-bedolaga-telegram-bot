@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import html
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -1028,6 +1028,22 @@ class RemnaWaveWebhookService:
                 'Webhook: пропуск expire для суточной подписки (управляет DailySubscriptionService)',
                 subscription_id=subscription.id,
                 user_id=user.id,
+            )
+            self._stamp_webhook_update(subscription)
+            await db.commit()
+            return
+
+        end_date_utc = (
+            subscription.end_date.astimezone(UTC)
+            if subscription.end_date.tzinfo is not None
+            else subscription.end_date.replace(tzinfo=UTC)
+        )
+        if end_date_utc > datetime.now(UTC) + timedelta(minutes=5):
+            logger.warning(
+                'Webhook user.expired: локальная end_date в будущем — пропуск (stale-событие панели)',
+                subscription_id=subscription.id,
+                user_id=user.id,
+                end_date=subscription.end_date,
             )
             self._stamp_webhook_update(subscription)
             await db.commit()
