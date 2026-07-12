@@ -20,6 +20,7 @@ async def create_channel_post(
     media_json: dict | None,
     idempotency_key: str,
     admin_id: int | None,
+    message_thread_id: int | None = None,
 ) -> ChannelPost:
     """Insert a history row in status ``sending`` and commit (at-most-once anchor)."""
     post = ChannelPost(
@@ -30,6 +31,7 @@ async def create_channel_post(
         media_json=media_json,
         idempotency_key=idempotency_key,
         admin_id=admin_id,
+        message_thread_id=message_thread_id,
         status='sending',
     )
     db.add(post)

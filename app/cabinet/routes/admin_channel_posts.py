@@ -56,6 +56,7 @@ class ChannelPostResponse(BaseModel):
     channel_id: str
     status: str
     telegram_message_id: int | None
+    message_thread_id: int | None
     error_code: str | None
     created_at: datetime | None
 
@@ -268,6 +269,7 @@ async def _send(db, *, int_value, canonical, title, data, keyboard, idempotency_
             disable_web_page_preview=data.disable_web_page_preview,
             idempotency_key=idempotency_key,
             admin_id=admin_id,
+            message_thread_id=data.message_thread_id,
         )
     except ChannelPostSendError as exc:
         code = status.HTTP_504_GATEWAY_TIMEOUT if exc.code == ERROR_TIMEOUT else status.HTTP_502_BAD_GATEWAY

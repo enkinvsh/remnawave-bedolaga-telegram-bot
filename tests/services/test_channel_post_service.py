@@ -384,3 +384,112 @@ def test_service_imports_only_bot_from_broadcast_service():
     assert 'broadcast_history' not in source
     assert 'BroadcastService' not in source
     assert 'BroadcastConfig' not in source
+
+
+# ── forum message_thread_id passthrough ─────────────────────────────────────
+
+
+async def _send_with_thread(monkeypatch, *, media, key):
+    _patch_crud(monkeypatch)
+    bot = _fake_bot()
+    broadcast_service.set_bot(bot)
+    await svc.send_post(
+        db=AsyncMock(),
+        chat_id_int=-1001,
+        canonical_channel_id='-1001',
+        title=None,
+        message_text='hi',
+        buttons=[],
+        media=media,
+        keyboard=None,
+        disable_web_page_preview=True,
+        idempotency_key=key,
+        admin_id=7,
+        message_thread_id=42,
+    )
+    return bot
+
+
+@pytest.mark.asyncio
+async def test_send_message_receives_thread_id(monkeypatch):
+    bot = await _send_with_thread(monkeypatch, media=None, key='t-msg')
+    _, kwargs = bot.send_message.await_args
+    assert kwargs['message_thread_id'] == 42
+
+
+@pytest.mark.asyncio
+async def test_send_media_receives_thread_id(monkeypatch):
+    for mtype, attr in (('photo', 'send_photo'), ('video', 'send_video'), ('document', 'send_document')):
+        bot = await _send_with_thread(monkeypatch, media=ChannelPostMedia(type=mtype, file_id='F'), key=f't-{mtype}')
+        _, kwargs = getattr(bot, attr).await_args
+        assert kwargs['message_thread_id'] == 42
+
+
+@pytest.mark.asyncio
+async def test_thread_id_persisted_on_history_row(monkeypatch):
+    created, _ = _patch_crud(monkeypatch)
+    broadcast_service.set_bot(_fake_bot())
+    await svc.send_post(
+        db=AsyncMock(),
+        chat_id_int=-1001,
+        canonical_channel_id='-1001',
+        title=None,
+        message_text='hi',
+        buttons=[],
+        media=None,
+        keyboard=None,
+        disable_web_page_preview=True,
+        idempotency_key='t-persist',
+        admin_id=7,
+        message_thread_id=7,
+    )
+    assert created['post'].message_thread_id == 7
+
+
+@pytest.mark.asyncio
+async def test_thread_id_defaults_none(monkeypatch):
+    created, _ = _patch_crud(monkeypatch)
+    bot = _fake_bot()
+    broadcast_service.set_bot(bot)
+    await svc.send_post(
+        db=AsyncMock(),
+        chat_id_int=-1001,
+        canonical_channel_id='-1001',
+        title=None,
+        message_text='hi',
+        buttons=[],
+        media=None,
+        keyboard=None,
+        disable_web_page_preview=True,
+        idempotency_key='t-none',
+        admin_id=7,
+    )
+    _, kwargs = bot.send_message.await_args
+    assert kwargs['message_thread_id'] is None
+    assert created['post'].message_thread_id is None
+
+
+# ── _classify_bad_request: honest forum-topic classification ─────────────────
+
+
+def test_classify_topic_closed():
+    assert svc._classify_bad_request(_bad_request('Bad Request: TOPIC_CLOSED')) == svc.ERROR_TOPIC_CLOSED
+
+
+def test_classify_thread_not_found():
+    assert (
+        svc._classify_bad_request(_bad_request('Bad Request: message thread not found')) == svc.ERROR_THREAD_NOT_FOUND
+    )
+
+
+def test_classify_thread_not_found_not_stale_file():
+    # 'message thread not found' contains 'not found' but NO 'file' → must not
+    # collapse to stale_file_id.
+    assert svc._classify_bad_request(_bad_request('Bad Request: message thread not found')) != svc.ERROR_STALE_FILE_ID
+
+
+def test_classify_existing_codes_unchanged():
+    assert svc._classify_bad_request(_bad_request('Bad Request: chat not found')) == svc.ERROR_CHAT_NOT_FOUND
+    assert svc._classify_bad_request(_bad_request('Bad Request: file reference expired')) == svc.ERROR_STALE_FILE_ID
+    assert svc._classify_bad_request(_bad_request("Bad Request: can't parse entities")) == svc.ERROR_INVALID_HTML
+    assert svc._classify_bad_request(_bad_request('Bad Request: something else')) == svc.ERROR_BAD_REQUEST

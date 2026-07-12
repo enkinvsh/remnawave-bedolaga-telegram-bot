@@ -198,7 +198,13 @@ async def test_send_rate_limited_429(monkeypatch):
 async def test_send_idempotency_echo_returns_existing_without_send(monkeypatch):
     _patch_common(monkeypatch)
     existing = SimpleNamespace(
-        id=99, channel_id='-1001', status='sent', telegram_message_id=1, error_code=None, created_at=None
+        id=99,
+        channel_id='-1001',
+        status='sent',
+        telegram_message_id=1,
+        message_thread_id=None,
+        error_code=None,
+        created_at=None,
     )
     monkeypatch.setattr(mod, 'get_channel_post_by_idempotency_key', AsyncMock(return_value=existing))
     send_post = AsyncMock()
@@ -238,7 +244,13 @@ async def test_send_empty_post_422(monkeypatch):
 async def test_send_success_returns_row_and_audits(monkeypatch):
     log = _patch_common(monkeypatch)
     row = SimpleNamespace(
-        id=5, channel_id='-1001', status='sent', telegram_message_id=555, error_code=None, created_at=None
+        id=5,
+        channel_id='-1001',
+        status='sent',
+        telegram_message_id=555,
+        message_thread_id=None,
+        error_code=None,
+        created_at=None,
     )
     send_post = AsyncMock(return_value=row)
     monkeypatch.setattr(mod, 'send_post', send_post)
@@ -356,7 +368,13 @@ async def test_allowlist_list_maps_targets(monkeypatch):
 async def test_history_lists_recent(monkeypatch):
     rows = [
         SimpleNamespace(
-            id=2, channel_id='-1001', status='sent', telegram_message_id=9, error_code=None, created_at=None
+            id=2,
+            channel_id='-1001',
+            status='sent',
+            telegram_message_id=9,
+            message_thread_id=None,
+            error_code=None,
+            created_at=None,
         ),
     ]
     monkeypatch.setattr(mod, 'get_recent_channel_posts', AsyncMock(return_value=rows))

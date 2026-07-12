@@ -57,3 +57,23 @@ def test_request_extra_field_rejected() -> None:
 def test_request_selected_buttons_field_rejected() -> None:
     with pytest.raises(ValidationError):
         ChannelPostRequest(destination_id='-100', message_text='x', selected_buttons=['home'])
+
+
+def test_message_thread_id_defaults_none() -> None:
+    req = ChannelPostRequest(destination_id='-100', message_text='x')
+    assert req.message_thread_id is None
+
+
+def test_message_thread_id_accepts_positive() -> None:
+    req = ChannelPostRequest(destination_id='-100', message_text='x', message_thread_id=5)
+    assert req.message_thread_id == 5
+
+
+def test_message_thread_id_rejects_zero() -> None:
+    with pytest.raises(ValidationError):
+        ChannelPostRequest(destination_id='-100', message_text='x', message_thread_id=0)
+
+
+def test_message_thread_id_rejects_negative() -> None:
+    with pytest.raises(ValidationError):
+        ChannelPostRequest(destination_id='-100', message_text='x', message_thread_id=-1)

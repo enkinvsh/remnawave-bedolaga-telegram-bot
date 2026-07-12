@@ -8,7 +8,7 @@ media.caption) поднимает ValidationError и превращается в
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChannelPostButton(BaseModel):
@@ -39,3 +39,4 @@ class ChannelPostRequest(BaseModel):
     custom_buttons: list[ChannelPostButton] = []
     media: ChannelPostMedia | None = None
     disable_web_page_preview: bool = True
+    message_thread_id: int | None = Field(default=None, ge=1)

@@ -27,6 +27,8 @@ ERROR_FORBIDDEN = 'forbidden'
 ERROR_CHAT_NOT_FOUND = 'chat_not_found'
 ERROR_INVALID_HTML = 'invalid_html'
 ERROR_STALE_FILE_ID = 'stale_file_id'
+ERROR_TOPIC_CLOSED = 'topic_closed'
+ERROR_THREAD_NOT_FOUND = 'thread_not_found'
 ERROR_BAD_REQUEST = 'bad_request'
 ERROR_RETRY_AFTER = 'retry_after'
 ERROR_TIMEOUT = 'timeout'
@@ -107,6 +109,10 @@ def _classify_bad_request(exc: TelegramBadRequest) -> str:
     text = str(getattr(exc, 'message', '') or '').lower()
     if 'chat not found' in text:
         return ERROR_CHAT_NOT_FOUND
+    if 'topic_closed' in text:
+        return ERROR_TOPIC_CLOSED
+    if 'message thread not found' in text:
+        return ERROR_THREAD_NOT_FOUND
     if 'file' in text and ('reference' in text or 'invalid' in text or 'not found' in text):
         return ERROR_STALE_FILE_ID
     if 'parse' in text or 'entities' in text or 'tag' in text or 'html' in text:
@@ -114,7 +120,7 @@ def _classify_bad_request(exc: TelegramBadRequest) -> str:
     return ERROR_BAD_REQUEST
 
 
-async def _dispatch_send(bot, chat_id_int, message_text, media, keyboard, disable_web_page_preview):
+async def _dispatch_send(bot, chat_id_int, message_text, media, keyboard, disable_web_page_preview, message_thread_id):
     if media is None:
         return await bot.send_message(
             chat_id_int,
@@ -122,6 +128,7 @@ async def _dispatch_send(bot, chat_id_int, message_text, media, keyboard, disabl
             parse_mode='HTML',
             reply_markup=keyboard,
             disable_web_page_preview=disable_web_page_preview,
+            message_thread_id=message_thread_id,
         )
     send_method = {
         'photo': bot.send_photo,
@@ -134,6 +141,7 @@ async def _dispatch_send(bot, chat_id_int, message_text, media, keyboard, disabl
         caption=message_text,
         parse_mode='HTML',
         reply_markup=keyboard,
+        message_thread_id=message_thread_id,
     )
 
 
@@ -150,6 +158,7 @@ async def send_post(
     disable_web_page_preview: bool,
     idempotency_key: str,
     admin_id: int | None,
+    message_thread_id: int | None = None,
 ):
     """History-first, at-most-once publish. Returns the persisted ChannelPost row.
 
@@ -169,11 +178,14 @@ async def send_post(
         media_json=media_json,
         idempotency_key=idempotency_key,
         admin_id=admin_id,
+        message_thread_id=message_thread_id,
     )
 
     bot = _require_bot()
     try:
-        sent = await _dispatch_send(bot, chat_id_int, message_text, media, keyboard, disable_web_page_preview)
+        sent = await _dispatch_send(
+            bot, chat_id_int, message_text, media, keyboard, disable_web_page_preview, message_thread_id
+        )
     except TelegramForbiddenError:
         return await mark_channel_post_failed(db, post, ERROR_FORBIDDEN)
     except TelegramRetryAfter:

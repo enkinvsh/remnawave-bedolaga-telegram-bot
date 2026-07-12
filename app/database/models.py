@@ -3903,6 +3903,7 @@ class ChannelPost(Base):
     media_json = Column(JSONB, nullable=True)
     idempotency_key = Column(String(255), nullable=False)
     telegram_message_id = Column(BigInteger, nullable=True)
+    message_thread_id = Column(BigInteger, nullable=True)  # forum topic id (optional)
     status = Column(String(20), nullable=False)  # 'sending' | 'sent' | 'failed'
     error_code = Column(String(100), nullable=True)
     admin_id = Column(Integer, nullable=True)
