@@ -754,6 +754,10 @@ class Settings(BaseSettings):
         '{"com.app.client.topup.100":10000,"com.app.client.topup.300":30000,"com.app.client.topup.500":50000}'
     )
 
+    # Channel-post publishing rate limit (per admin, fail-closed)
+    CHANNEL_POST_RATE_LIMIT_COUNT: int = 10
+    CHANNEL_POST_RATE_LIMIT_WINDOW_SECONDS: int = 300
+
     # PayPear (paypear.ru)
     PAYPEAR_ENABLED: bool = False
     PAYPEAR_SHOP_ID: str | None = None

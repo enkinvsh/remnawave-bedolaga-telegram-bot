@@ -142,6 +142,84 @@ async def toggle_channel(db: AsyncSession, channel_db_id: int) -> RequiredChanne
     return channel
 
 
+# -- Channel-post allowlist CRUD -------------------------------------------------
+# `is_post_target` marks a channel/group as a valid TARGET for channel-post
+# publishing. It is ORTHOGONAL to `is_active` (mandatory subscription
+# enforcement): posting-allowlist ≠ sub-enforcement.
+
+
+async def get_post_targets(db: AsyncSession) -> list[RequiredChannel]:
+    """Get all channels flagged as channel-post targets (``is_post_target=true``)."""
+    result = await db.execute(
+        select(RequiredChannel)
+        .where(RequiredChannel.is_post_target.is_(True))
+        .order_by(RequiredChannel.sort_order, RequiredChannel.id)
+    )
+    return list(result.scalars().all())
+
+
+async def get_post_target_by_channel_id(db: AsyncSession, channel_id: str) -> RequiredChannel | None:
+    """Get a single post-target row by canonical channel_id (must be a post target)."""
+    result = await db.execute(
+        select(RequiredChannel).where(
+            RequiredChannel.channel_id == channel_id,
+            RequiredChannel.is_post_target.is_(True),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def upsert_post_target(
+    db: AsyncSession,
+    channel_id: str,
+    title: str | None = None,
+) -> RequiredChannel:
+    """Flag a channel as a post target, creating the row if absent.
+
+    Existing row: ONLY sets ``is_post_target=true`` (and fills ``title`` if it was
+    empty). Every subscription-enforcement field (``is_active``,
+    ``disable_*_on_leave``, ``sort_order``, ``channel_link``) is preserved.
+
+    New row: created with ``is_post_target=true`` AND ``is_active=false`` —
+    ``is_active=true`` would make it a MANDATORY user-subscription channel.
+    """
+    channel = await get_channel_by_channel_id(db, channel_id)
+    if channel is not None:
+        channel.is_post_target = True
+        if not channel.title and title:
+            channel.title = title
+        channel.updated_at = datetime.now(UTC)
+        await db.commit()
+        await db.refresh(channel)
+        return channel
+
+    channel = RequiredChannel(
+        channel_id=channel_id,
+        title=title,
+        is_active=False,  # posting-allowlist ≠ subscription-enforcement
+        is_post_target=True,
+    )
+    db.add(channel)
+    await db.commit()
+    await db.refresh(channel)
+    return channel
+
+
+async def revoke_post_target(db: AsyncSession, channel_id: str) -> bool:
+    """Clear ``is_post_target`` for a channel. Never deletes/deactivates the row.
+
+    Returns False if there is no matching post-target row.
+    """
+    channel = await get_post_target_by_channel_id(db, channel_id)
+    if channel is None:
+        return False
+    channel.is_post_target = False
+    channel.updated_at = datetime.now(UTC)
+    await db.commit()
+    await db.refresh(channel)
+    return True
+
+
 # -- UserChannelSubscription CRUD ------------------------------------------------
 
 

@@ -3880,11 +3880,42 @@ class RequiredChannel(Base):
     sort_order = Column(Integer, nullable=False, server_default='0')
     disable_trial_on_leave = Column(Boolean, nullable=False, server_default='true')
     disable_paid_on_leave = Column(Boolean, nullable=False, server_default='false')
+    # True — канал/группа разрешён как ЦЕЛЬ для channel-post (посты из кабинета).
+    # Ортогонально is_active (обязательная подписка): posting-allowlist ≠ sub-enforcement.
+    is_post_target = Column(Boolean, nullable=False, server_default='false')
     created_at = Column(AwareDateTime(), nullable=False, server_default=func.now())
     updated_at = Column(AwareDateTime(), nullable=True, onupdate=func.now())
 
     def __repr__(self) -> str:
         return f'<RequiredChannel id={self.id} channel_id={self.channel_id!r} active={self.is_active}>'
+
+
+class ChannelPost(Base):
+    """История публикаций channel-post (один rich-пост → один канал/группа)."""
+
+    __tablename__ = 'channel_posts'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    channel_id = Column(String(100), nullable=False)  # canonical decimal chat id (always string)
+    title = Column(String(255), nullable=True)
+    message_text = Column(Text, nullable=True)
+    buttons_json = Column(JSONB, nullable=True)
+    media_json = Column(JSONB, nullable=True)
+    idempotency_key = Column(String(255), nullable=False)
+    telegram_message_id = Column(BigInteger, nullable=True)
+    status = Column(String(20), nullable=False)  # 'sending' | 'sent' | 'failed'
+    error_code = Column(String(100), nullable=True)
+    admin_id = Column(Integer, nullable=True)
+    created_at = Column(AwareDateTime(), nullable=False, server_default=func.now())
+    updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('idempotency_key', name='uq_channel_posts_idempotency_key'),
+        Index('ix_channel_posts_channel_created', 'channel_id', 'created_at'),
+    )
+
+    def __repr__(self) -> str:
+        return f'<ChannelPost id={self.id} channel_id={self.channel_id!r} status={self.status!r}>'
 
 
 class UserChannelSubscription(Base):

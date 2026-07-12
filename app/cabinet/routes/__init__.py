@@ -12,6 +12,7 @@ from .admin_broadcasts import router as admin_broadcasts_router
 from .admin_bulk_actions import router as admin_bulk_actions_router
 from .admin_button_styles import router as admin_button_styles_router
 from .admin_campaigns import router as admin_campaigns_router
+from .admin_channel_posts import router as admin_channel_posts_router
 from .admin_channels import router as admin_channels_router
 from .admin_email_templates import router as admin_email_templates_router
 from .admin_info_pages import router as admin_info_pages_router
@@ -151,6 +152,7 @@ router.include_router(admin_pinned_messages_router)
 router.include_router(admin_button_styles_router)
 router.include_router(admin_menu_layout_router)
 router.include_router(admin_channels_router)
+router.include_router(admin_channel_posts_router)
 router.include_router(admin_apps_router)
 router.include_router(admin_roles_router)
 router.include_router(admin_policies_router)
