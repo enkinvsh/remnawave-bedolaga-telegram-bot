@@ -28,6 +28,7 @@ ERROR_TOO_MANY_BUTTONS = 'too_many_buttons'
 ERROR_RICH_BAD_TAG = 'rich_bad_tag'
 ERROR_RICH_BAD_ATTR = 'rich_bad_attr'
 ERROR_RICH_TOO_LONG = 'rich_too_long'
+ERROR_RICH_TOO_MANY_MEDIA = 'rich_too_many_media'
 ERROR_RICH_WITH_MEDIA = 'rich_with_media'
 
 # ── Лимиты (Telegram) ─────────────────────────────────────────────────────
@@ -36,6 +37,9 @@ MAX_CAPTION_LENGTH = 1024
 MAX_BUTTON_LABEL_LENGTH = 64
 MAX_BUTTONS = 10
 MAX_RICH_LENGTH = 32000
+MAX_RICH_MEDIA = 50
+MAP_ZOOM_MIN = 13
+MAP_ZOOM_MAX = 20
 
 # ── Диапазон знакового 64-битного целого (Telegram chat id) ───────────────
 INT64_MIN = -(2**63)
@@ -60,6 +64,14 @@ RICH_ALLOWED_TAGS = frozenset(
         'th',
         'td',
         'img',
+        'video',
+        'audio',
+        'figure',
+        'figcaption',
+        'cite',
+        'tg-collage',
+        'tg-slideshow',
+        'tg-map',
         'hr',
         'br',
         'footer',
@@ -86,13 +98,18 @@ RICH_ALLOWED_TAGS = frozenset(
     }
 )
 RICH_ALLOWED_ATTRS: dict[str, frozenset[str]] = {
-    'img': frozenset({'src'}),
+    'img': frozenset({'src', 'tg-spoiler'}),
+    'video': frozenset({'src', 'tg-spoiler'}),
+    'audio': frozenset({'src'}),
+    'tg-map': frozenset({'lat', 'long', 'zoom'}),
     'a': frozenset({'href'}),
     'tg-emoji': frozenset({'emoji-id'}),
     'tg-reference': frozenset({'name'}),
     'span': frozenset({'class'}),
     'table': frozenset({'bordered', 'striped'}),
 }
+# Медиа-теги: src обязателен + https-only; учитываются в лимите ≤50.
+_RICH_MEDIA_TAGS = frozenset({'img', 'video', 'audio'})
 _RICH_TAG_RE = re.compile(r'<(/?)([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>')
 _RICH_ATTR_RE = re.compile(r'([a-zA-Z][a-zA-Z0-9-]*)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\')?')
 
@@ -178,40 +195,75 @@ def validate_post_content(message_text: str | None, media: ChannelPostMedia | No
         raise ChannelPostRenderError(ERROR_TEXT_TOO_LONG, 'message too long')
 
 
+def _bad_attr(tag_name: str, attr_name: str, message: str) -> ChannelPostRenderError:
+    return ChannelPostRenderError(ERROR_RICH_BAD_ATTR, message, extra={'tag': tag_name, 'attr': attr_name})
+
+
+def _validate_media_src(tag_name: str, attrs: dict[str, str | None]) -> None:
+    src = attrs.get('src')
+    if not src:
+        raise _bad_attr(tag_name, 'src', f'{tag_name} requires src')
+    if urlsplit(src).scheme != 'https':
+        raise _bad_attr(tag_name, 'src', f'{tag_name} src must be https')
+
+
+def _validate_map_attrs(attrs: dict[str, str | None]) -> None:
+    for name in ('lat', 'long'):
+        value = attrs.get(name)
+        if value is None:
+            raise _bad_attr('tg-map', name, f'tg-map requires {name}')
+        try:
+            float(value)
+        except ValueError:
+            raise _bad_attr('tg-map', name, f'tg-map {name} must be a float') from None
+
+    zoom = attrs.get('zoom')
+    if zoom is None:
+        raise _bad_attr('tg-map', 'zoom', 'tg-map requires zoom')
+    try:
+        zoom_value = int(zoom)
+    except ValueError:
+        raise _bad_attr('tg-map', 'zoom', 'tg-map zoom must be an int') from None
+    if not (MAP_ZOOM_MIN <= zoom_value <= MAP_ZOOM_MAX):
+        raise _bad_attr('tg-map', 'zoom', 'tg-map zoom out of range')
+
+
 def _validate_rich_attrs(tag_name: str, attrs_blob: str) -> None:
     allowed = RICH_ALLOWED_ATTRS.get(tag_name, frozenset())
+    attrs: dict[str, str | None] = {}
     for match in _RICH_ATTR_RE.finditer(attrs_blob):
         attr_name = match.group(1).lower()
         if attr_name not in allowed:
-            raise ChannelPostRenderError(
-                ERROR_RICH_BAD_ATTR,
-                f'attribute not allowed: {attr_name}',
-                extra={'tag': tag_name, 'attr': attr_name},
-            )
-        if tag_name == 'img' and attr_name == 'src':
-            src = match.group(2) if match.group(2) is not None else (match.group(3) or '')
-            if urlsplit(src).scheme != 'https':
-                raise ChannelPostRenderError(
-                    ERROR_RICH_BAD_ATTR,
-                    'img src must be https',
-                    extra={'tag': tag_name, 'attr': attr_name},
-                )
+            raise _bad_attr(tag_name, attr_name, f'attribute not allowed: {attr_name}')
+        attrs[attr_name] = match.group(2) if match.group(2) is not None else match.group(3)
+
+    if tag_name in _RICH_MEDIA_TAGS:
+        _validate_media_src(tag_name, attrs)
+    elif tag_name == 'tg-map':
+        _validate_map_attrs(attrs)
 
 
 def validate_rich_content(html: str | None) -> None:
     """Проверить rich-HTML по расширенному allowlist. None при валидности.
 
     Пусто → ERROR_EMPTY_POST; >32000 → ERROR_RICH_TOO_LONG; неизвестный тег →
-    ERROR_RICH_BAD_TAG; запрещённый атрибут или non-https img → ERROR_RICH_BAD_ATTR.
+    ERROR_RICH_BAD_TAG; запрещённый атрибут / non-https media / bad tg-map →
+    ERROR_RICH_BAD_ATTR; >50 медиа (img+video+audio) → ERROR_RICH_TOO_MANY_MEDIA.
     """
     if not html:
         raise ChannelPostRenderError(ERROR_EMPTY_POST, 'rich post must have content')
     if len(html) > MAX_RICH_LENGTH:
         raise ChannelPostRenderError(ERROR_RICH_TOO_LONG, 'rich message too long')
 
+    media_count = 0
     for is_closing, tag_name_raw, attrs_blob in _RICH_TAG_RE.findall(html):
         tag_name = tag_name_raw.lower()
         if tag_name not in RICH_ALLOWED_TAGS:
             raise ChannelPostRenderError(ERROR_RICH_BAD_TAG, f'tag not allowed: {tag_name}', extra={'tag': tag_name})
         if not is_closing:
+            if tag_name in _RICH_MEDIA_TAGS:
+                media_count += 1
             _validate_rich_attrs(tag_name, attrs_blob)
+
+    if media_count > MAX_RICH_MEDIA:
+        raise ChannelPostRenderError(ERROR_RICH_TOO_MANY_MEDIA, 'too many media attachments')

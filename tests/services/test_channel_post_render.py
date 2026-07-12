@@ -281,3 +281,94 @@ def test_validate_rich_bad_attr_extra_carries_tag_and_attr() -> None:
 def test_render_error_extra_defaults_empty() -> None:
     err = render.ChannelPostRenderError(render.ERROR_EMPTY_POST)
     assert err.extra == {}
+
+
+# ── v8: media blocks (video/audio/figure/collage/slideshow/map) ────────────
+
+
+ALLOWED_V8_SAMPLES = [
+    '<video src="https://x/v.mp4"></video>',
+    '<audio src="https://x/a.mp3"></audio>',
+    '<tg-map lat="41.9" long="12.5" zoom="14"/>',
+    '<video src="https://x/v.mp4" tg-spoiler></video>',
+    '<img src="https://x/i.png" tg-spoiler/>',
+    '<tg-collage><img src="https://x/i.png"/><video src="https://x/v.mp4"></video><figcaption>c</figcaption></tg-collage>',
+    '<tg-slideshow><img src="https://x/i.png"/><video src="https://x/v.mp4"></video><figcaption>c</figcaption></tg-slideshow>',
+    '<figure><img src="https://x/i.png" tg-spoiler/><figcaption>cap <cite>credit</cite></figcaption></figure>',
+    '<tg-map lat="41.9" long="12.5" zoom="13"/>',
+    '<tg-map lat="-0.5" long="180" zoom="20"/>',
+]
+
+
+@pytest.mark.parametrize('sample', ALLOWED_V8_SAMPLES)
+def test_validate_rich_accepts_v8_media(sample: str) -> None:
+    assert render.validate_rich_content(sample) is None
+
+
+def test_validate_rich_rejects_video_http_src() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<video src="http://x/v.mp4"></video>')
+    assert exc.value.code == render.ERROR_RICH_BAD_ATTR
+    assert exc.value.extra == {'tag': 'video', 'attr': 'src'}
+
+
+def test_validate_rich_rejects_audio_missing_src() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<audio></audio>')
+    assert exc.value.code == render.ERROR_RICH_BAD_ATTR
+    assert exc.value.extra == {'tag': 'audio', 'attr': 'src'}
+
+
+def test_validate_rich_rejects_img_missing_src() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<img/>')
+    assert exc.value.code == render.ERROR_RICH_BAD_ATTR
+    assert exc.value.extra == {'tag': 'img', 'attr': 'src'}
+
+
+def test_validate_rich_rejects_map_zoom_below_range() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<tg-map lat="41.9" long="12.5" zoom="12"/>')
+    assert exc.value.code == render.ERROR_RICH_BAD_ATTR
+    assert exc.value.extra == {'tag': 'tg-map', 'attr': 'zoom'}
+
+
+def test_validate_rich_rejects_map_zoom_above_range() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<tg-map lat="41.9" long="12.5" zoom="21"/>')
+    assert exc.value.code == render.ERROR_RICH_BAD_ATTR
+    assert exc.value.extra == {'tag': 'tg-map', 'attr': 'zoom'}
+
+
+def test_validate_rich_rejects_map_lat_not_float() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<tg-map lat="abc" long="12.5" zoom="14"/>')
+    assert exc.value.code == render.ERROR_RICH_BAD_ATTR
+    assert exc.value.extra == {'tag': 'tg-map', 'attr': 'lat'}
+
+
+def test_validate_rich_rejects_unknown_attr_on_collage() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<tg-collage cols="3"><img src="https://x/i.png"/></tg-collage>')
+    assert exc.value.code == render.ERROR_RICH_BAD_ATTR
+    assert exc.value.extra == {'tag': 'tg-collage', 'attr': 'cols'}
+
+
+def test_validate_rich_accepts_exactly_50_media() -> None:
+    html = '<img src="https://x/i.png"/>' * render.MAX_RICH_MEDIA
+    assert render.validate_rich_content(html) is None
+
+
+def test_validate_rich_rejects_51_media() -> None:
+    html = '<img src="https://x/i.png"/>' * (render.MAX_RICH_MEDIA + 1)
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content(html)
+    assert exc.value.code == render.ERROR_RICH_TOO_MANY_MEDIA
+
+
+def test_media_count_mixes_img_video_audio() -> None:
+    unit = '<img src="https://x/i.png"/><video src="https://x/v.mp4"></video><audio src="https://x/a.mp3"></audio>'
+    # 17 units = 51 media tags → over the 50 cap.
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content(unit * 17)
+    assert exc.value.code == render.ERROR_RICH_TOO_MANY_MEDIA
