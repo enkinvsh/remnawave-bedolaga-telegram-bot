@@ -87,3 +87,34 @@ def test_rich_defaults_false() -> None:
 def test_rich_accepts_true() -> None:
     req = ChannelPostRequest(destination_id='-100', message_text='<b>x</b>', rich=True)
     assert req.rich is True
+
+
+def test_button_style_icon_default_none() -> None:
+    btn = ChannelPostButton(label='Open', url='https://x.io')
+    assert btn.style is None
+    assert btn.icon_custom_emoji_id is None
+
+
+def test_button_style_accepts_allowed() -> None:
+    for style in ('primary', 'success', 'danger'):
+        assert ChannelPostButton(label='Open', url='https://x.io', style=style).style == style
+
+
+def test_button_style_rejects_unknown() -> None:
+    with pytest.raises(ValidationError):
+        ChannelPostButton(label='Open', url='https://x.io', style='rainbow')
+
+
+def test_button_icon_accepts_digits() -> None:
+    btn = ChannelPostButton(label='Open', url='https://x.io', icon_custom_emoji_id='123456')
+    assert btn.icon_custom_emoji_id == '123456'
+
+
+def test_button_icon_rejects_non_digits() -> None:
+    with pytest.raises(ValidationError):
+        ChannelPostButton(label='Open', url='https://x.io', icon_custom_emoji_id='abc')
+
+
+def test_button_icon_rejects_too_long() -> None:
+    with pytest.raises(ValidationError):
+        ChannelPostButton(label='Open', url='https://x.io', icon_custom_emoji_id='1' * 33)

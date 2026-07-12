@@ -12,12 +12,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChannelPostButton(BaseModel):
-    """URL-кнопка (без callback)."""
+    """URL-кнопка (без callback). Опциональные style/icon для Telegram."""
 
     model_config = ConfigDict(extra='forbid')
 
     label: str
     url: str
+    style: Literal['primary', 'success', 'danger'] | None = None
+    icon_custom_emoji_id: str | None = Field(default=None, pattern=r'^\d{1,32}$')
 
 
 class ChannelPostMedia(BaseModel):

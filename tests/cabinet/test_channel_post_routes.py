@@ -416,7 +416,7 @@ async def test_rich_bad_tag_rejected_422(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await mod.create_channel_post_endpoint(req, idempotency_key='k', db=AsyncMock(), admin=_admin())
     assert exc.value.status_code == 422
-    assert exc.value.detail == {'code': render_mod.ERROR_RICH_BAD_TAG}
+    assert exc.value.detail == {'code': render_mod.ERROR_RICH_BAD_TAG, 'tag': 'script'}
 
 
 @pytest.mark.asyncio

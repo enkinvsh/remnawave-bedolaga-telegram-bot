@@ -61,6 +61,7 @@ RICH_ALLOWED_TAGS = frozenset(
         'td',
         'img',
         'hr',
+        'br',
         'footer',
         'mark',
         'sub',
@@ -97,10 +98,15 @@ _RICH_ATTR_RE = re.compile(r'([a-zA-Z][a-zA-Z0-9-]*)(?:\s*=\s*"([^"]*)"|\s*=\s*\
 
 
 class ChannelPostRenderError(ValueError):
-    """Ошибка валидации/рендеринга channel-post со стабильным кодом."""
+    """Ошибка валидации/рендеринга channel-post со стабильным кодом.
 
-    def __init__(self, code: str, message: str | None = None) -> None:
+    ``extra`` несёт санитизированные детали (только имена тега/атрибута, уже
+    ограниченные regex) для диагностики на клиенте.
+    """
+
+    def __init__(self, code: str, message: str | None = None, extra: dict | None = None) -> None:
         self.code = code
+        self.extra = extra or {}
         super().__init__(message or code)
 
 
@@ -141,7 +147,16 @@ def build_url_keyboard(buttons: list[ChannelPostButton]) -> InlineKeyboardMarkup
             raise ChannelPostRenderError(ERROR_BAD_BUTTON_LABEL, 'invalid button label')
         if urlsplit(btn.url).scheme not in _ALLOWED_URL_SCHEMES:
             raise ChannelPostRenderError(ERROR_BAD_BUTTON_URL, 'button url must be http/https')
-        rows.append([InlineKeyboardButton(text=label, url=btn.url)])
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    url=btn.url,
+                    style=btn.style,
+                    icon_custom_emoji_id=btn.icon_custom_emoji_id,
+                )
+            ]
+        )
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -168,11 +183,19 @@ def _validate_rich_attrs(tag_name: str, attrs_blob: str) -> None:
     for match in _RICH_ATTR_RE.finditer(attrs_blob):
         attr_name = match.group(1).lower()
         if attr_name not in allowed:
-            raise ChannelPostRenderError(ERROR_RICH_BAD_ATTR, f'attribute not allowed: {attr_name}')
+            raise ChannelPostRenderError(
+                ERROR_RICH_BAD_ATTR,
+                f'attribute not allowed: {attr_name}',
+                extra={'tag': tag_name, 'attr': attr_name},
+            )
         if tag_name == 'img' and attr_name == 'src':
             src = match.group(2) if match.group(2) is not None else (match.group(3) or '')
             if urlsplit(src).scheme != 'https':
-                raise ChannelPostRenderError(ERROR_RICH_BAD_ATTR, 'img src must be https')
+                raise ChannelPostRenderError(
+                    ERROR_RICH_BAD_ATTR,
+                    'img src must be https',
+                    extra={'tag': tag_name, 'attr': attr_name},
+                )
 
 
 def validate_rich_content(html: str | None) -> None:
@@ -189,6 +212,6 @@ def validate_rich_content(html: str | None) -> None:
     for is_closing, tag_name_raw, attrs_blob in _RICH_TAG_RE.findall(html):
         tag_name = tag_name_raw.lower()
         if tag_name not in RICH_ALLOWED_TAGS:
-            raise ChannelPostRenderError(ERROR_RICH_BAD_TAG, f'tag not allowed: {tag_name}')
+            raise ChannelPostRenderError(ERROR_RICH_BAD_TAG, f'tag not allowed: {tag_name}', extra={'tag': tag_name})
         if not is_closing:
             _validate_rich_attrs(tag_name, attrs_blob)

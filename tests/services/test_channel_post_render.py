@@ -126,6 +126,23 @@ def test_build_url_keyboard_rejects_too_many_buttons() -> None:
     assert exc.value.code == render.ERROR_TOO_MANY_BUTTONS
 
 
+def test_build_url_keyboard_passes_style_and_icon() -> None:
+    button = ChannelPostButton(label='A', url='https://a.io', style='primary', icon_custom_emoji_id='123456')
+    markup = render.build_url_keyboard([button])
+    assert markup is not None
+    btn = markup.inline_keyboard[0][0]
+    assert btn.style == 'primary'
+    assert btn.icon_custom_emoji_id == '123456'
+
+
+def test_build_url_keyboard_omits_absent_style_and_icon() -> None:
+    markup = render.build_url_keyboard([ChannelPostButton(label='A', url='https://a.io')])
+    assert markup is not None
+    dumped = markup.inline_keyboard[0][0].model_dump(exclude_none=True)
+    assert 'style' not in dumped
+    assert 'icon_custom_emoji_id' not in dumped
+
+
 # ── validate_post_content ─────────────────────────────────────────────────
 
 
@@ -239,3 +256,28 @@ def test_validate_rich_rejects_empty() -> None:
     with pytest.raises(render.ChannelPostRenderError) as exc:
         render.validate_rich_content('')
     assert exc.value.code == render.ERROR_EMPTY_POST
+
+
+def test_validate_rich_accepts_br() -> None:
+    assert render.validate_rich_content('<p>a<br>b</p>') is None
+
+
+def test_validate_rich_accepts_br_self_closing() -> None:
+    assert render.validate_rich_content('<p>a<br/>b</p>') is None
+
+
+def test_validate_rich_bad_tag_extra_carries_tag() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<div>x</div>')
+    assert exc.value.extra == {'tag': 'div'}
+
+
+def test_validate_rich_bad_attr_extra_carries_tag_and_attr() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<p onclick="evil()">x</p>')
+    assert exc.value.extra == {'tag': 'p', 'attr': 'onclick'}
+
+
+def test_render_error_extra_defaults_empty() -> None:
+    err = render.ChannelPostRenderError(render.ERROR_EMPTY_POST)
+    assert err.extra == {}

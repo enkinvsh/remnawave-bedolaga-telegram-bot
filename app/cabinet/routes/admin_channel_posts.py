@@ -122,7 +122,7 @@ class AllowlistAddRequest(BaseModel):
 
 
 def _render_error(exc: ChannelPostRenderError) -> HTTPException:
-    return HTTPException(status_code=422, detail={'code': exc.code})
+    return HTTPException(status_code=422, detail={'code': exc.code, **exc.extra})
 
 
 def _canonicalize(destination_id: str) -> tuple[int, str]:
