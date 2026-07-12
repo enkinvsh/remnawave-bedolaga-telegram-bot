@@ -21,6 +21,7 @@ async def create_channel_post(
     idempotency_key: str,
     admin_id: int | None,
     message_thread_id: int | None = None,
+    is_rich: bool = False,
 ) -> ChannelPost:
     """Insert a history row in status ``sending`` and commit (at-most-once anchor)."""
     post = ChannelPost(
@@ -32,6 +33,7 @@ async def create_channel_post(
         idempotency_key=idempotency_key,
         admin_id=admin_id,
         message_thread_id=message_thread_id,
+        is_rich=is_rich,
         status='sending',
     )
     db.add(post)

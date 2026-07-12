@@ -166,3 +166,76 @@ def test_validate_caption_over_limit_rejected() -> None:
     with pytest.raises(render.ChannelPostRenderError) as exc:
         render.validate_post_content('x' * (render.MAX_CAPTION_LENGTH + 1), media)
     assert exc.value.code == render.ERROR_CAPTION_TOO_LONG
+
+
+# ── validate_rich_content (extended allowlist) ─────────────────────────────
+
+
+ALLOWED_RICH_SAMPLES = [
+    '<h2>Title</h2>',
+    '<h4>Sub</h4>',
+    '<p>Para</p>',
+    '<details><summary>More</summary><p>hidden</p></details>',
+    '<ul><li>a</li><li>b</li></ul>',
+    '<ol><li>a</li></ol>',
+    '<table bordered striped><tr><th>H</th></tr><tr><td>C</td></tr></table>',
+    '<img src="https://cdn.example/x.png">',
+    '<hr>',
+    '<footer>foot</footer>',
+    '<mark>hl</mark>',
+    '<sub>lo</sub><sup>hi</sup>',
+    '<tg-reference name="ref">r</tg-reference>',
+    '<a href="https://a.io">link</a>',
+    '<a href="#anchor">jump</a>',
+    '<b>b</b><strong>s</strong><i>i</i><em>e</em>',
+    '<u>u</u><ins>i</ins><s>s</s><strike>x</strike><del>d</del>',
+    '<code>c</code><pre>p</pre><blockquote>q</blockquote>',
+    '<tg-spoiler>sp</tg-spoiler>',
+    '<tg-emoji emoji-id="123456">😀</tg-emoji>',
+    '<span class="tg-spoiler">x</span>',
+]
+
+
+@pytest.mark.parametrize('sample', ALLOWED_RICH_SAMPLES)
+def test_validate_rich_accepts_allowed(sample: str) -> None:
+    assert render.validate_rich_content(sample) is None
+
+
+def test_validate_rich_rejects_script() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<script>alert(1)</script>')
+    assert exc.value.code == render.ERROR_RICH_BAD_TAG
+
+
+def test_validate_rich_rejects_div() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<div>x</div>')
+    assert exc.value.code == render.ERROR_RICH_BAD_TAG
+
+
+def test_validate_rich_rejects_onclick_attr() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<p onclick="evil()">x</p>')
+    assert exc.value.code == render.ERROR_RICH_BAD_ATTR
+
+
+def test_validate_rich_rejects_img_non_https() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('<img src="http://insecure/x.png">')
+    assert exc.value.code == render.ERROR_RICH_BAD_ATTR
+
+
+def test_validate_rich_rejects_over_limit() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('a' * (render.MAX_RICH_LENGTH + 1))
+    assert exc.value.code == render.ERROR_RICH_TOO_LONG
+
+
+def test_validate_rich_accepts_at_limit() -> None:
+    assert render.validate_rich_content('a' * render.MAX_RICH_LENGTH) is None
+
+
+def test_validate_rich_rejects_empty() -> None:
+    with pytest.raises(render.ChannelPostRenderError) as exc:
+        render.validate_rich_content('')
+    assert exc.value.code == render.ERROR_EMPTY_POST

@@ -19,6 +19,7 @@ from app.database.crud.channel_post import (
     mark_channel_post_sent,
 )
 from app.services.broadcast_service import broadcast_service
+from app.services.telegram_rich import SendRichMessage
 
 
 ERROR_BOT_UNAVAILABLE = 'bot_unavailable'
@@ -29,6 +30,7 @@ ERROR_INVALID_HTML = 'invalid_html'
 ERROR_STALE_FILE_ID = 'stale_file_id'
 ERROR_TOPIC_CLOSED = 'topic_closed'
 ERROR_THREAD_NOT_FOUND = 'thread_not_found'
+ERROR_RICH_NOT_SUPPORTED = 'rich_not_supported'
 ERROR_BAD_REQUEST = 'bad_request'
 ERROR_RETRY_AFTER = 'retry_after'
 ERROR_TIMEOUT = 'timeout'
@@ -120,6 +122,16 @@ def _classify_bad_request(exc: TelegramBadRequest) -> str:
     return ERROR_BAD_REQUEST
 
 
+_RICH_UNSUPPORTED_MARKERS = ('sendrichmessage', 'rich', 'unsupported', 'not supported', 'method not found')
+
+
+def _classify_rich_bad_request(exc: TelegramBadRequest) -> str:
+    text = str(getattr(exc, 'message', '') or '').lower()
+    if any(marker in text for marker in _RICH_UNSUPPORTED_MARKERS):
+        return ERROR_RICH_NOT_SUPPORTED
+    return _classify_bad_request(exc)
+
+
 async def _dispatch_send(bot, chat_id_int, message_text, media, keyboard, disable_web_page_preview, message_thread_id):
     if media is None:
         return await bot.send_message(
@@ -159,12 +171,14 @@ async def send_post(
     idempotency_key: str,
     admin_id: int | None,
     message_thread_id: int | None = None,
+    is_rich: bool = False,
 ):
     """History-first, at-most-once publish. Returns the persisted ChannelPost row.
 
     Success → ``sent`` + telegram_message_id. Known Telegram errors → ``failed`` +
     stable code. Timeout/ambiguous → leave ``sending`` and raise
-    ChannelPostSendError (never auto-retried).
+    ChannelPostSendError (never auto-retried). ``is_rich`` routes through
+    sendRichMessage (no media, no auto-degradation to sendMessage).
     """
     buttons_json = [{'label': b.label, 'url': b.url} for b in buttons] or None
     media_json = {'type': media.type, 'file_id': media.file_id} if media is not None else None
@@ -179,19 +193,31 @@ async def send_post(
         idempotency_key=idempotency_key,
         admin_id=admin_id,
         message_thread_id=message_thread_id,
+        is_rich=is_rich,
     )
 
     bot = _require_bot()
     try:
-        sent = await _dispatch_send(
-            bot, chat_id_int, message_text, media, keyboard, disable_web_page_preview, message_thread_id
-        )
+        if is_rich:
+            sent = await bot(
+                SendRichMessage(
+                    chat_id=chat_id_int,
+                    message_thread_id=message_thread_id,
+                    rich_message={'html': message_text, 'skip_entity_detection': True},
+                    reply_markup=keyboard,
+                )
+            )
+        else:
+            sent = await _dispatch_send(
+                bot, chat_id_int, message_text, media, keyboard, disable_web_page_preview, message_thread_id
+            )
     except TelegramForbiddenError:
         return await mark_channel_post_failed(db, post, ERROR_FORBIDDEN)
     except TelegramRetryAfter:
         return await mark_channel_post_failed(db, post, ERROR_RETRY_AFTER)
     except TelegramBadRequest as exc:
-        return await mark_channel_post_failed(db, post, _classify_bad_request(exc))
+        code = _classify_rich_bad_request(exc) if is_rich else _classify_bad_request(exc)
+        return await mark_channel_post_failed(db, post, code)
     except TimeoutError as exc:
         raise ChannelPostSendError(ERROR_TIMEOUT, 'send timed out; outcome unknown') from exc
 

@@ -18,6 +18,7 @@ from fastapi.params import Header
 
 from app.cabinet.routes import admin_channel_posts as mod
 from app.cabinet.schemas.channel_posts import ChannelPostButton, ChannelPostRequest
+from app.services import channel_post_render as render_mod
 
 
 # ── route registration + permission gating ─────────────────────────────────
@@ -203,6 +204,7 @@ async def test_send_idempotency_echo_returns_existing_without_send(monkeypatch):
         status='sent',
         telegram_message_id=1,
         message_thread_id=None,
+        is_rich=False,
         error_code=None,
         created_at=None,
     )
@@ -249,6 +251,7 @@ async def test_send_success_returns_row_and_audits(monkeypatch):
         status='sent',
         telegram_message_id=555,
         message_thread_id=None,
+        is_rich=False,
         error_code=None,
         created_at=None,
     )
@@ -373,6 +376,7 @@ async def test_history_lists_recent(monkeypatch):
             status='sent',
             telegram_message_id=9,
             message_thread_id=None,
+            is_rich=False,
             error_code=None,
             created_at=None,
         ),
@@ -380,3 +384,206 @@ async def test_history_lists_recent(monkeypatch):
     monkeypatch.setattr(mod, 'get_recent_channel_posts', AsyncMock(return_value=rows))
     resp = await mod.list_channel_posts(db=AsyncMock(), _admin=_admin())
     assert resp[0].id == 2
+
+
+# ── rich mode ───────────────────────────────────────────────────────────────
+
+
+def _rich_request(**over):
+    kwargs = {'destination_id': '-1001', 'message_text': '<b>hi</b>', 'rich': True}
+    kwargs.update(over)
+    return ChannelPostRequest(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_rich_with_media_rejected_422(monkeypatch):
+    _patch_common(monkeypatch)
+    send_post = AsyncMock()
+    monkeypatch.setattr(mod, 'send_post', send_post)
+    req = _rich_request(media={'type': 'photo', 'file_id': 'F'})
+    with pytest.raises(HTTPException) as exc:
+        await mod.create_channel_post_endpoint(req, idempotency_key='k', db=AsyncMock(), admin=_admin())
+    assert exc.value.status_code == 422
+    assert exc.value.detail == {'code': mod.ERROR_RICH_WITH_MEDIA}
+    send_post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rich_bad_tag_rejected_422(monkeypatch):
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(mod, 'send_post', AsyncMock())
+    req = _rich_request(message_text='<script>x</script>')
+    with pytest.raises(HTTPException) as exc:
+        await mod.create_channel_post_endpoint(req, idempotency_key='k', db=AsyncMock(), admin=_admin())
+    assert exc.value.status_code == 422
+    assert exc.value.detail == {'code': render_mod.ERROR_RICH_BAD_TAG}
+
+
+@pytest.mark.asyncio
+async def test_rich_send_success_sets_is_rich(monkeypatch):
+    _patch_common(monkeypatch)
+    row = SimpleNamespace(
+        id=8,
+        channel_id='-1001',
+        status='sent',
+        telegram_message_id=999,
+        message_thread_id=None,
+        is_rich=True,
+        error_code=None,
+        created_at=None,
+    )
+    send_post = AsyncMock(return_value=row)
+    monkeypatch.setattr(mod, 'send_post', send_post)
+
+    resp = await mod.create_channel_post_endpoint(_rich_request(), idempotency_key='k', db=AsyncMock(), admin=_admin())
+
+    assert resp.is_rich is True
+    _, kwargs = send_post.await_args
+    assert kwargs['is_rich'] is True
+
+
+# ── custom emoji endpoints ───────────────────────────────────────────────────
+
+
+def _emoji_bot(sticker, *, file_path='sticker/x.webp', content=b'IMG'):
+    import io
+
+    return SimpleNamespace(
+        get_custom_emoji_stickers=AsyncMock(return_value=[sticker] if sticker is not None else []),
+        get_file=AsyncMock(return_value=SimpleNamespace(file_path=file_path)),
+        download_file=AsyncMock(return_value=io.BytesIO(content)),
+        get_sticker_set=AsyncMock(),
+    )
+
+
+def _patch_emoji(monkeypatch, bot, *, cached=None):
+    monkeypatch.setattr(mod, 'broadcast_service', SimpleNamespace(bot=bot))
+    monkeypatch.setattr(
+        mod,
+        'cache',
+        SimpleNamespace(get=AsyncMock(return_value=cached), set=AsyncMock()),
+    )
+
+
+def test_emoji_routes_registered_and_gated():
+    from app.cabinet.routes import router
+
+    paths = {getattr(r, 'path', None) for r in router.routes}
+    assert '/cabinet/admin/channel-posts/emoji/{custom_emoji_id}' in paths
+    assert '/cabinet/admin/channel-posts/emoji-pack/{set_name}' in paths
+    assert _perms_for(_route('/cabinet/admin/channel-posts/emoji/{custom_emoji_id}', 'GET')) == {'channel_posts:read'}
+    assert _perms_for(_route('/cabinet/admin/channel-posts/emoji-pack/{set_name}', 'GET')) == {'channel_posts:read'}
+
+
+@pytest.mark.asyncio
+async def test_emoji_rejects_non_digit_422(monkeypatch):
+    _patch_emoji(monkeypatch, _emoji_bot(None))
+    with pytest.raises(HTTPException) as exc:
+        await mod.get_emoji_image('abc', db=AsyncMock(), _admin=_admin())
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_emoji_rejects_overlong_id_422(monkeypatch):
+    _patch_emoji(monkeypatch, _emoji_bot(None))
+    with pytest.raises(HTTPException) as exc:
+        await mod.get_emoji_image('1' * 33, db=AsyncMock(), _admin=_admin())
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_emoji_not_found_404(monkeypatch):
+    _patch_emoji(monkeypatch, _emoji_bot(None))
+    with pytest.raises(HTTPException) as exc:
+        await mod.get_emoji_image('123456', db=AsyncMock(), _admin=_admin())
+    assert exc.value.status_code == 404
+    assert exc.value.detail == {'code': mod.ERROR_EMOJI_NOT_FOUND}
+
+
+@pytest.mark.asyncio
+async def test_emoji_static_uses_file_id(monkeypatch):
+    sticker = SimpleNamespace(
+        file_id='STATIC_FILE', is_animated=False, is_video=False, thumbnail=None, custom_emoji_id='123456'
+    )
+    bot = _emoji_bot(sticker)
+    _patch_emoji(monkeypatch, bot)
+    resp = await mod.get_emoji_image('123456', db=AsyncMock(), _admin=_admin())
+    bot.get_file.assert_awaited_once()
+    assert bot.get_file.await_args.args[0] == 'STATIC_FILE'
+    assert resp.media_type == 'image/webp'
+    assert resp.headers['Cache-Control'] == 'public, max-age=86400'
+    assert resp.headers['X-Content-Type-Options'] == 'nosniff'
+    assert resp.body == b'IMG'
+
+
+@pytest.mark.asyncio
+async def test_emoji_animated_uses_thumbnail(monkeypatch):
+    thumb = SimpleNamespace(file_id='THUMB_FILE')
+    sticker = SimpleNamespace(
+        file_id='TGS_FILE', is_animated=True, is_video=False, thumbnail=thumb, custom_emoji_id='123456'
+    )
+    bot = _emoji_bot(sticker, file_path='thumb/x.webp')
+    _patch_emoji(monkeypatch, bot)
+    await mod.get_emoji_image('123456', db=AsyncMock(), _admin=_admin())
+    assert bot.get_file.await_args.args[0] == 'THUMB_FILE'
+
+
+@pytest.mark.asyncio
+async def test_emoji_animated_no_thumbnail_404(monkeypatch):
+    sticker = SimpleNamespace(
+        file_id='TGS_FILE', is_animated=True, is_video=False, thumbnail=None, custom_emoji_id='123456'
+    )
+    _patch_emoji(monkeypatch, _emoji_bot(sticker))
+    with pytest.raises(HTTPException) as exc:
+        await mod.get_emoji_image('123456', db=AsyncMock(), _admin=_admin())
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_emoji_cache_hit_skips_sticker_api(monkeypatch):
+    bot = _emoji_bot(None)
+    _patch_emoji(monkeypatch, bot, cached={'file_id': 'CACHED_FILE'})
+    await mod.get_emoji_image('123456', db=AsyncMock(), _admin=_admin())
+    bot.get_custom_emoji_stickers.assert_not_awaited()
+    assert bot.get_file.await_args.args[0] == 'CACHED_FILE'
+
+
+@pytest.mark.asyncio
+async def test_emoji_pack_shape_and_filter(monkeypatch):
+    stickers = [
+        SimpleNamespace(custom_emoji_id='111', emoji='😀'),
+        SimpleNamespace(custom_emoji_id=None, emoji='🚫'),
+        SimpleNamespace(custom_emoji_id='222', emoji='🔥'),
+    ]
+    bot = SimpleNamespace(
+        get_sticker_set=AsyncMock(return_value=SimpleNamespace(name='pack', title='Pack', stickers=stickers)),
+    )
+    _patch_emoji(monkeypatch, bot)
+    resp = await mod.get_emoji_pack('some_pack', db=AsyncMock(), _admin=_admin())
+    assert resp.name == 'pack'
+    assert resp.title == 'Pack'
+    assert [e.custom_emoji_id for e in resp.emojis] == ['111', '222']
+
+
+@pytest.mark.asyncio
+async def test_emoji_pack_bad_name_422(monkeypatch):
+    _patch_emoji(monkeypatch, SimpleNamespace(get_sticker_set=AsyncMock()))
+    with pytest.raises(HTTPException) as exc:
+        await mod.get_emoji_pack('bad name!', db=AsyncMock(), _admin=_admin())
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_emoji_pack_unknown_404(monkeypatch):
+    from aiogram.exceptions import TelegramBadRequest
+
+    bot = SimpleNamespace(
+        get_sticker_set=AsyncMock(
+            side_effect=TelegramBadRequest(method=SimpleNamespace(), message='STICKERSET_INVALID')
+        ),
+    )
+    _patch_emoji(monkeypatch, bot)
+    with pytest.raises(HTTPException) as exc:
+        await mod.get_emoji_pack('unknown_pack', db=AsyncMock(), _admin=_admin())
+    assert exc.value.status_code == 404
+    assert exc.value.detail == {'code': mod.ERROR_PACK_NOT_FOUND}

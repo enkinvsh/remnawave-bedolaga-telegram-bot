@@ -3904,6 +3904,7 @@ class ChannelPost(Base):
     idempotency_key = Column(String(255), nullable=False)
     telegram_message_id = Column(BigInteger, nullable=True)
     message_thread_id = Column(BigInteger, nullable=True)  # forum topic id (optional)
+    is_rich = Column(Boolean, nullable=False, server_default='false')  # sendRichMessage path
     status = Column(String(20), nullable=False)  # 'sending' | 'sent' | 'failed'
     error_code = Column(String(100), nullable=True)
     admin_id = Column(Integer, nullable=True)

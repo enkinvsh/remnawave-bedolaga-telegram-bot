@@ -9,6 +9,7 @@
 кодом-константой; никаких инлайн-строк.
 """
 
+import re
 from urllib.parse import urlsplit
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -24,18 +25,75 @@ ERROR_CAPTION_TOO_LONG = 'caption_too_long'
 ERROR_BAD_BUTTON_URL = 'bad_button_url'
 ERROR_BAD_BUTTON_LABEL = 'bad_button_label'
 ERROR_TOO_MANY_BUTTONS = 'too_many_buttons'
+ERROR_RICH_BAD_TAG = 'rich_bad_tag'
+ERROR_RICH_BAD_ATTR = 'rich_bad_attr'
+ERROR_RICH_TOO_LONG = 'rich_too_long'
+ERROR_RICH_WITH_MEDIA = 'rich_with_media'
 
 # ── Лимиты (Telegram) ─────────────────────────────────────────────────────
 MAX_MESSAGE_LENGTH = 4096
 MAX_CAPTION_LENGTH = 1024
 MAX_BUTTON_LABEL_LENGTH = 64
 MAX_BUTTONS = 10
+MAX_RICH_LENGTH = 32000
 
 # ── Диапазон знакового 64-битного целого (Telegram chat id) ───────────────
 INT64_MIN = -(2**63)
 INT64_MAX = 2**63 - 1
 
 _ALLOWED_URL_SCHEMES = ('http', 'https')
+
+# ── Rich-режим (sendRichMessage): расширенный allowlist ────────────────────
+# Теги без атрибутов не входят в RICH_ALLOWED_ATTRS (любой атрибут → reject).
+RICH_ALLOWED_TAGS = frozenset(
+    {
+        'h2',
+        'h4',
+        'p',
+        'details',
+        'summary',
+        'ul',
+        'ol',
+        'li',
+        'table',
+        'tr',
+        'th',
+        'td',
+        'img',
+        'hr',
+        'footer',
+        'mark',
+        'sub',
+        'sup',
+        'tg-reference',
+        'a',
+        'b',
+        'strong',
+        'i',
+        'em',
+        'u',
+        'ins',
+        's',
+        'strike',
+        'del',
+        'code',
+        'pre',
+        'blockquote',
+        'tg-spoiler',
+        'tg-emoji',
+        'span',
+    }
+)
+RICH_ALLOWED_ATTRS: dict[str, frozenset[str]] = {
+    'img': frozenset({'src'}),
+    'a': frozenset({'href'}),
+    'tg-emoji': frozenset({'emoji-id'}),
+    'tg-reference': frozenset({'name'}),
+    'span': frozenset({'class'}),
+    'table': frozenset({'bordered', 'striped'}),
+}
+_RICH_TAG_RE = re.compile(r'<(/?)([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>')
+_RICH_ATTR_RE = re.compile(r'([a-zA-Z][a-zA-Z0-9-]*)(?:\s*=\s*"([^"]*)"|\s*=\s*\'([^\']*)\')?')
 
 
 class ChannelPostRenderError(ValueError):
@@ -103,3 +161,34 @@ def validate_post_content(message_text: str | None, media: ChannelPostMedia | No
         raise ChannelPostRenderError(ERROR_EMPTY_POST, 'post must have text or media')
     if len(message_text) > MAX_MESSAGE_LENGTH:
         raise ChannelPostRenderError(ERROR_TEXT_TOO_LONG, 'message too long')
+
+
+def _validate_rich_attrs(tag_name: str, attrs_blob: str) -> None:
+    allowed = RICH_ALLOWED_ATTRS.get(tag_name, frozenset())
+    for match in _RICH_ATTR_RE.finditer(attrs_blob):
+        attr_name = match.group(1).lower()
+        if attr_name not in allowed:
+            raise ChannelPostRenderError(ERROR_RICH_BAD_ATTR, f'attribute not allowed: {attr_name}')
+        if tag_name == 'img' and attr_name == 'src':
+            src = match.group(2) if match.group(2) is not None else (match.group(3) or '')
+            if urlsplit(src).scheme != 'https':
+                raise ChannelPostRenderError(ERROR_RICH_BAD_ATTR, 'img src must be https')
+
+
+def validate_rich_content(html: str | None) -> None:
+    """Проверить rich-HTML по расширенному allowlist. None при валидности.
+
+    Пусто → ERROR_EMPTY_POST; >32000 → ERROR_RICH_TOO_LONG; неизвестный тег →
+    ERROR_RICH_BAD_TAG; запрещённый атрибут или non-https img → ERROR_RICH_BAD_ATTR.
+    """
+    if not html:
+        raise ChannelPostRenderError(ERROR_EMPTY_POST, 'rich post must have content')
+    if len(html) > MAX_RICH_LENGTH:
+        raise ChannelPostRenderError(ERROR_RICH_TOO_LONG, 'rich message too long')
+
+    for is_closing, tag_name_raw, attrs_blob in _RICH_TAG_RE.findall(html):
+        tag_name = tag_name_raw.lower()
+        if tag_name not in RICH_ALLOWED_TAGS:
+            raise ChannelPostRenderError(ERROR_RICH_BAD_TAG, f'tag not allowed: {tag_name}')
+        if not is_closing:
+            _validate_rich_attrs(tag_name, attrs_blob)

@@ -493,3 +493,133 @@ def test_classify_existing_codes_unchanged():
     assert svc._classify_bad_request(_bad_request('Bad Request: file reference expired')) == svc.ERROR_STALE_FILE_ID
     assert svc._classify_bad_request(_bad_request("Bad Request: can't parse entities")) == svc.ERROR_INVALID_HTML
     assert svc._classify_bad_request(_bad_request('Bad Request: something else')) == svc.ERROR_BAD_REQUEST
+
+
+# ── rich send path (sendRichMessage) ────────────────────────────────────────
+
+
+def _rich_bot(*, message_id=999, side_effect=None):
+    bot = AsyncMock()
+    if side_effect is not None:
+        bot.side_effect = side_effect
+    else:
+        bot.return_value = SimpleNamespace(message_id=message_id)
+    return bot
+
+
+async def _send_rich(monkeypatch, bot, *, key, keyboard=None, thread=None):
+    _patch_crud(monkeypatch)
+    broadcast_service.set_bot(bot)
+    return await svc.send_post(
+        db=AsyncMock(),
+        chat_id_int=-1001,
+        canonical_channel_id='-1001',
+        title=None,
+        message_text='<b>hi</b>',
+        buttons=[],
+        media=None,
+        keyboard=keyboard,
+        disable_web_page_preview=True,
+        idempotency_key=key,
+        admin_id=7,
+        message_thread_id=thread,
+        is_rich=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_rich_send_makes_single_bot_call(monkeypatch):
+    bot = _rich_bot()
+    post = await _send_rich(monkeypatch, bot, key='r1', thread=5)
+    assert post.status == 'sent'
+    assert post.telegram_message_id == 999
+    assert bot.await_count == 1
+    method = bot.await_args.args[0]
+    assert isinstance(method, svc.SendRichMessage)
+    assert method.chat_id == -1001
+    assert method.message_thread_id == 5
+    assert method.rich_message == {'html': '<b>hi</b>', 'skip_entity_detection': True}
+
+
+@pytest.mark.asyncio
+async def test_rich_send_does_not_call_send_message(monkeypatch):
+    bot = _rich_bot()
+    bot.send_message = AsyncMock()
+    await _send_rich(monkeypatch, bot, key='r2')
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rich_send_passes_keyboard(monkeypatch):
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='x', url='https://a.io')]])
+    bot = _rich_bot()
+    await _send_rich(monkeypatch, bot, key='r3', keyboard=kb)
+    method = bot.await_args.args[0]
+    assert method.reply_markup is kb
+
+
+@pytest.mark.asyncio
+async def test_rich_persisted_on_history_row(monkeypatch):
+    created, _ = _patch_crud(monkeypatch)
+    broadcast_service.set_bot(_rich_bot())
+    await svc.send_post(
+        db=AsyncMock(),
+        chat_id_int=-1001,
+        canonical_channel_id='-1001',
+        title=None,
+        message_text='<b>x</b>',
+        buttons=[],
+        media=None,
+        keyboard=None,
+        disable_web_page_preview=True,
+        idempotency_key='r-persist',
+        admin_id=7,
+        is_rich=True,
+    )
+    assert created['post'].is_rich is True
+
+
+@pytest.mark.asyncio
+async def test_rich_bad_request_unsupported_marks_rich_not_supported(monkeypatch):
+    exc = TelegramBadRequest(method=SimpleNamespace(), message='Bad Request: method sendRichMessage not supported')
+    bot = _rich_bot(side_effect=exc)
+    post = await _send_rich(monkeypatch, bot, key='r-unsup')
+    assert post.status == 'failed'
+    assert post.error_code == svc.ERROR_RICH_NOT_SUPPORTED
+
+
+@pytest.mark.asyncio
+async def test_rich_bad_request_other_uses_regular_classification(monkeypatch):
+    exc = TelegramBadRequest(method=SimpleNamespace(), message='Bad Request: chat not found')
+    bot = _rich_bot(side_effect=exc)
+    post = await _send_rich(monkeypatch, bot, key='r-chat')
+    assert post.status == 'failed'
+    assert post.error_code == svc.ERROR_CHAT_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_rich_timeout_leaves_sending(monkeypatch):
+    created, calls = _patch_crud(monkeypatch)
+    bot = _rich_bot(side_effect=TimeoutError())
+    broadcast_service.set_bot(bot)
+    with pytest.raises(svc.ChannelPostSendError) as exc:
+        await svc.send_post(
+            db=AsyncMock(),
+            chat_id_int=-1001,
+            canonical_channel_id='-1001',
+            title=None,
+            message_text='<b>x</b>',
+            buttons=[],
+            media=None,
+            keyboard=None,
+            disable_web_page_preview=True,
+            idempotency_key='r-timeout',
+            admin_id=7,
+            is_rich=True,
+        )
+    assert exc.value.code == svc.ERROR_TIMEOUT
+    assert created['post'].status == 'sending'
+    assert calls.sent == 0
+    assert calls.failed == 0

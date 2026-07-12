@@ -77,3 +77,13 @@ def test_message_thread_id_rejects_zero() -> None:
 def test_message_thread_id_rejects_negative() -> None:
     with pytest.raises(ValidationError):
         ChannelPostRequest(destination_id='-100', message_text='x', message_thread_id=-1)
+
+
+def test_rich_defaults_false() -> None:
+    req = ChannelPostRequest(destination_id='-100', message_text='x')
+    assert req.rich is False
+
+
+def test_rich_accepts_true() -> None:
+    req = ChannelPostRequest(destination_id='-100', message_text='<b>x</b>', rich=True)
+    assert req.rich is True
