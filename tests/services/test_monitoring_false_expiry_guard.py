@@ -71,9 +71,7 @@ def _service(monkeypatch, *, panel_user=None, error: Exception | None = None):
 def _patch_common(monkeypatch, subs, expire_mock, user):
     monkeypatch.setattr(ms, 'get_expired_subscriptions', AsyncMock(return_value=subs))
     monkeypatch.setattr(ms, 'get_user_by_id', AsyncMock(return_value=user))
-    monkeypatch.setattr(
-        'app.database.crud.subscription.is_recently_updated_by_webhook', lambda _s: False
-    )
+    monkeypatch.setattr('app.database.crud.subscription.is_recently_updated_by_webhook', lambda _s: False)
     monkeypatch.setattr('app.database.crud.subscription.expire_subscription', expire_mock)
 
 
