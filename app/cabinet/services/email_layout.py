@@ -102,7 +102,7 @@ async def render_branded_email(
         footer_note=footer_note,
         unsubscribe_block=unsubscribe_html,
         footer_address=escape(service_name),
-        bg_color=colors['darkBackground'],
+        bg_color='transparent',
         card_color=colors['darkSurface'],
         card_border_color=_darken_hex(accent, 0.6),
         card_radius=card_radius,

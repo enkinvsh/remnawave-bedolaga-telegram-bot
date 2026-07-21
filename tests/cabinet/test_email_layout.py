@@ -26,7 +26,7 @@ async def test_render_branded_email_uses_defaults_and_wordmark(monkeypatch: pyte
 
     assert 'Default Service' in rendered
     assert '<img ' not in rendered
-    assert '#0a0f1a' in rendered
+    assert 'background-color:transparent' in rendered
     assert '#0f172a' in rendered
     assert '{' not in rendered
 
@@ -61,7 +61,7 @@ async def test_render_branded_email_uses_custom_theme_and_accent_gradient(monkey
     )
 
     assert 'Custom VPN' in rendered
-    assert '#030305' in rendered
+    assert 'background-color:transparent' in rendered
     assert '#0a1710' in rendered
     assert 'linear-gradient(90deg, #00842c 0%, #00cc44 100%)' in rendered
     assert '#00511b' in rendered
