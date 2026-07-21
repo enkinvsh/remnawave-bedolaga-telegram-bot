@@ -246,6 +246,19 @@ class NotificationSettingsService:
             return 24
 
     @classmethod
+    def is_second_wave_due(cls, days_since: float) -> bool:
+        trigger_days = cls.get_second_wave_trigger_days()
+        return trigger_days <= days_since < trigger_days + cls.get_second_wave_window_days()
+
+    @classmethod
+    def get_second_wave_trigger_days(cls) -> int:
+        return lifecycle_rules.EXPIRED_SECOND_WAVE_TRIGGER_DAYS
+
+    @classmethod
+    def get_second_wave_window_days(cls) -> int:
+        return lifecycle_rules.EXPIRED_SECOND_WAVE_WINDOW_DAYS
+
+    @classmethod
     def set_second_wave_valid_hours(cls, hours: int) -> bool:
         try:
             hours_int = max(1, min(168, int(hours)))
@@ -268,6 +281,15 @@ class NotificationSettingsService:
             return max(0, min(100, int(value)))
         except (TypeError, ValueError):
             return 20
+
+    @classmethod
+    def is_third_wave_due(cls, days_since: float) -> bool:
+        trigger_days = cls.get_third_wave_trigger_days()
+        return trigger_days <= days_since < trigger_days + cls.get_third_wave_window_days()
+
+    @classmethod
+    def get_third_wave_window_days(cls) -> int:
+        return lifecycle_rules.EXPIRED_THIRD_WAVE_WINDOW_DAYS
 
     @classmethod
     def set_third_wave_discount_percent(cls, percent: int) -> bool:

@@ -23,6 +23,9 @@ from typing import Any
 
 # Валидные группы правил в порядке жизненного цикла клиента.
 GROUPS: tuple[str, ...] = ('pre_trial', 'in_trial', 'post_trial', 'paid')
+EXPIRED_SECOND_WAVE_TRIGGER_DAYS = 2
+EXPIRED_SECOND_WAVE_WINDOW_DAYS = 2
+EXPIRED_THIRD_WAVE_WINDOW_DAYS = 1
 
 # Плейсхолдеры, поддерживаемые в текстах правил. Документируются для кабинета,
 # чтобы оператор видел доступные подстановки при редактировании шаблона.
