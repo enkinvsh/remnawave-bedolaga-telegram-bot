@@ -1167,6 +1167,12 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = True
     # Implicit TLS (SMTPS) — required for port 465. Auto-enabled when SMTP_PORT == 465.
     SMTP_USE_SSL: bool = False
+    EMAIL_PROVIDER: Literal['smtp', 'postbox'] = 'smtp'
+    POSTBOX_ENDPOINT: str = 'https://postbox.cloud.yandex.net'
+    POSTBOX_REGION: str = 'ru-central1'
+    POSTBOX_ACCESS_KEY_ID: str | None = None
+    POSTBOX_SECRET_ACCESS_KEY: str | None = None
+    EMAIL_FROM: str | None = None
 
     # Ban System Integration (BedolagaBan monitoring)
     BAN_SYSTEM_ENABLED: bool = False

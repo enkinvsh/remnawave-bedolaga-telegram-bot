@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models import User
 
 from ..dependencies import get_cabinet_db, require_permission
+from ..services.email_layout import render_branded_email_if_enabled
 from ..services.email_template_overrides import (
     COMMON_CONTEXT_VARS,
     build_common_context,
@@ -807,6 +808,7 @@ async def preview_template(
     notification_type: str,
     data: EmailTemplatePreviewRequest,
     _admin: User = Depends(require_permission('email_templates:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     """Preview a rendered email template with sample data.
 
@@ -833,6 +835,8 @@ async def preview_template(
         else:
             rendered_html = '<p>Template not found</p>'
             subject = 'N/A'
+
+    rendered_html = await render_branded_email_if_enabled(db, title=subject, body_html=rendered_html)
 
     return {
         'subject': subject,

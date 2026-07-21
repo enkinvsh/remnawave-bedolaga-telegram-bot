@@ -13,8 +13,12 @@ from typing import Any
 import structlog
 from aiogram import Bot
 
+from app.cabinet.services.email_layout import render_branded_email_if_enabled
+from app.cabinet.services.email_template_overrides import get_rendered_override
 from app.config import settings
+from app.database.database import AsyncSessionLocal
 from app.database.models import User, UserStatus
+from app.services.email_delivery_service import send_email as deliver_email
 from app.utils.timezone import format_email_datetime
 
 
@@ -331,7 +335,7 @@ class NotificationDeliveryService:
         context: dict[str, Any],
     ) -> bool:
         """Send notification via email."""
-        if not self.email_service.is_configured():
+        if settings.EMAIL_PROVIDER == 'smtp' and not self.email_service.is_configured():
             logger.debug('SMTP не настроен, пропускаем email уведомление')
             return False
 
@@ -369,37 +373,40 @@ class NotificationDeliveryService:
             if 'reason' not in context and context.get('comment'):
                 context['reason'] = context['comment']
 
-            # Try DB override (get_rendered_override substitutes context vars and wraps in base template)
-            template = None
-            try:
-                from app.cabinet.services.email_template_overrides import get_rendered_override
+            async with AsyncSessionLocal() as db:
+                # Try DB override (get_rendered_override substitutes context vars and wraps in base template)
+                template = None
+                try:
+                    rendered = await get_rendered_override(notification_type.value, language, context, db)
+                    if rendered:
+                        subject, body_html = rendered
+                        template = {
+                            'subject': subject,
+                            'body_html': body_html,
+                        }
+                except Exception as e:
+                    logger.debug('Не удалось проверить override шаблона', e=e)
 
-                rendered = await get_rendered_override(notification_type.value, language, context)
-                if rendered:
-                    subject, body_html = rendered
-                    template = {
-                        'subject': subject,
-                        'body_html': body_html,
-                    }
-            except Exception as e:
-                logger.debug('Не удалось проверить override шаблона', e=e)
+                if not template:
+                    template = self.email_templates.get_template(notification_type, language, context)
 
-            if not template:
-                template = self.email_templates.get_template(notification_type, language, context)
+                if not template:
+                    logger.warning(
+                        'Не найден email шаблон для типа уведомления', notification_type_value=notification_type.value
+                    )
+                    return False
 
-            if not template:
-                logger.warning(
-                    'Не найден email шаблон для типа уведомления', notification_type_value=notification_type.value
+                body_html = await render_branded_email_if_enabled(
+                    db,
+                    title=template['subject'],
+                    body_html=template['body_html'],
                 )
-                return False
 
-            # Send email (sync smtplib — run in thread to avoid blocking event loop)
-            success = await asyncio.to_thread(
-                self.email_service.send_email,
-                to_email=user.email,
+            success = await deliver_email(
+                to=user.email,
                 subject=template['subject'],
-                body_html=template['body_html'],
-                body_text=template.get('body_text'),
+                html=body_html,
+                text=template.get('body_text'),
             )
 
             if success:

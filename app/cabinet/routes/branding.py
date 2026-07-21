@@ -36,6 +36,7 @@ ENABLED_THEMES_KEY = 'CABINET_ENABLED_THEMES'  # Stores JSON with enabled themes
 ANIMATION_ENABLED_KEY = 'CABINET_ANIMATION_ENABLED'  # Stores "true" or "false"
 FULLSCREEN_ENABLED_KEY = 'CABINET_FULLSCREEN_ENABLED'  # Stores "true" or "false"
 EMAIL_AUTH_ENABLED_KEY = 'CABINET_EMAIL_AUTH_ENABLED'  # Stores "true" or "false"
+EMAIL_LAYOUT_ENABLED_KEY = 'CABINET_EMAIL_LAYOUT_ENABLED'  # Stores "true" or "false"
 YANDEX_METRIKA_ID_KEY = 'CABINET_YANDEX_METRIKA_ID'  # Stores counter ID (numeric string)
 GOOGLE_ADS_ID_KEY = 'CABINET_GOOGLE_ADS_ID'  # Stores conversion ID (e.g. "AW-123456789")
 GOOGLE_ADS_LABEL_KEY = 'CABINET_GOOGLE_ADS_LABEL'  # Stores conversion label (alphanumeric)
@@ -138,6 +139,18 @@ class AnimationEnabledResponse(BaseModel):
 
 class AnimationEnabledUpdate(BaseModel):
     """Request to update animation setting."""
+
+    enabled: bool
+
+
+class EmailLayoutEnabledResponse(BaseModel):
+    """Branded email layout setting."""
+
+    enabled: bool = False
+
+
+class EmailLayoutEnabledUpdate(BaseModel):
+    """Request to update branded email layout setting."""
 
     enabled: bool
 
@@ -760,6 +773,27 @@ async def update_animation_enabled(
     logger.info('Admin set animation enabled', telegram_id=admin.telegram_id, enabled=payload.enabled)
 
     return AnimationEnabledResponse(enabled=payload.enabled)
+
+
+@router.get('/email-layout', response_model=EmailLayoutEnabledResponse)
+async def get_email_layout_enabled(
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get branded email layout state. Disabled by default."""
+    value = await get_setting_value(db, EMAIL_LAYOUT_ENABLED_KEY)
+    return EmailLayoutEnabledResponse(enabled=value is not None and value.lower() == 'true')
+
+
+@router.put('/email-layout', response_model=EmailLayoutEnabledResponse)
+async def update_email_layout_enabled(
+    payload: EmailLayoutEnabledUpdate,
+    admin: User = Depends(require_permission('settings:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Update branded email layout state. Admin only."""
+    await set_setting_value(db, EMAIL_LAYOUT_ENABLED_KEY, str(payload.enabled).lower())
+    logger.info('Admin set branded email layout', telegram_id=admin.telegram_id, enabled=payload.enabled)
+    return EmailLayoutEnabledResponse(enabled=payload.enabled)
 
 
 # ============ Animation Config Routes (new JSON-based) ============
