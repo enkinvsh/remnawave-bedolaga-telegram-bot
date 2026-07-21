@@ -7,8 +7,10 @@
 """
 
 import html
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cabinet.routes.admin_email_templates import (
     SAMPLE_CONTEXTS,
@@ -18,6 +20,7 @@ from app.cabinet.routes.admin_email_templates import (
     _placeholder_context,
     preview_template,
 )
+from app.cabinet.services import email_layout
 from app.cabinet.services.email_template_overrides import (
     COMMON_CONTEXT_VARS,
     build_common_context,
@@ -27,6 +30,14 @@ from app.cabinet.services.email_template_overrides import (
 
 
 ALL_TYPE_KEYS = [t['type'] for t in TEMPLATE_TYPES]
+
+
+def _empty_settings_db() -> AsyncSession:
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute.return_value = result
+    return db
 
 
 # ============ Выдача шаблонов в редактор ============
@@ -194,7 +205,7 @@ async def test_preview_substitutes_sample_values_into_custom_body():
         subject='Привет, {username}',
         body_html='<p>Ссылка: <a href="{verification_url}">тут</a>, истекает через {expire_hours} ч.</p>',
     )
-    result = await preview_template('email_verification', data, _admin=None)
+    result = await preview_template('email_verification', data, _admin=None, db=_empty_settings_db())
     sample_url = SAMPLE_CONTEXTS['email_verification']['verification_url']
     assert html.escape(sample_url) in result['body_html']
     assert '{verification_url}' not in result['body_html']
@@ -209,7 +220,7 @@ async def test_preview_substitutes_common_vars_into_custom_body():
         subject='От {service_name}',
         body_html='<p>Кабинет: <a href="{cabinet_url}">{cabinet_url}</a>, команда {service_name}</p>',
     )
-    result = await preview_template('subscription_expired', data, _admin=None)
+    result = await preview_template('subscription_expired', data, _admin=None, db=_empty_settings_db())
     common = build_common_context()
     assert '{cabinet_url}' not in result['body_html']
     assert '{service_name}' not in result['body_html']
@@ -274,6 +285,22 @@ async def test_recipient_common_vars_never_leak_as_literals(monkeypatch):
 @pytest.mark.asyncio
 async def test_preview_default_template_uses_sample_values():
     data = EmailTemplatePreviewRequest(language='ru')
-    result = await preview_template('email_verification', data, _admin=None)
+    result = await preview_template('email_verification', data, _admin=None, db=_empty_settings_db())
     assert '{verification_url}' not in result['body_html']
     assert 'example.com' in result['body_html']
+
+
+@pytest.mark.asyncio
+async def test_preview_wraps_default_template_when_email_layout_enabled(monkeypatch: pytest.MonkeyPatch):
+    async def get_setting(_db: AsyncSession, key: str) -> str | None:
+        return 'true' if key == email_layout.EMAIL_LAYOUT_ENABLED_KEY else None
+
+    monkeypatch.setattr(email_layout, 'get_setting_value', get_setting)
+    data = EmailTemplatePreviewRequest(language='ru')
+
+    result = await preview_template('email_verification', data, _admin=None, db=AsyncMock())
+
+    body = result['body_html']
+    assert body.lower().count('<!doctype') == 1
+    assert 'color-scheme:dark' in body
+    assert '{' not in body
