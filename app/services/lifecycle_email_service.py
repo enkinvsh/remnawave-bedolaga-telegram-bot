@@ -45,6 +45,31 @@ def _unsubscribe_url(user_id: int) -> str:
     token = quote(create_unsubscribe_token(user_id), safe='')
     return f'{_cabinet_url()}/email/unsubscribe?token={token}'
 
+_TRACKING_CAMPAIGNS: dict[str, str] = {
+    'email_trial_ending': 'Email: триал заканчивается',
+    'email_post_trial': 'Email: лестница после трила',
+    'email_winback_w2': 'Email: win-back волна 2',
+    'email_winback_w3': 'Email: win-back волна 3',
+    'email_referral_block': 'Email: реферальный блок',
+    'winback_oneoff': 'Email: win-back разовая кампания',
+}
+
+_tracking_campaigns_ensured = False
+
+
+async def _ensure_tracking_campaigns(db: AsyncSession) -> None:
+    global _tracking_campaigns_ensured
+    if _tracking_campaigns_ensured:
+        return
+    from app.database.crud.campaign import create_campaign, get_campaign_by_start_parameter
+
+    for start_parameter, name in _TRACKING_CAMPAIGNS.items():
+        existing = await get_campaign_by_start_parameter(db, start_parameter, only_active=False)
+        if existing is None:
+            await create_campaign(db, name=name, start_parameter=start_parameter, bonus_type='none')
+    _tracking_campaigns_ensured = True
+
+
 _EVENT_CAMPAIGNS: dict[str, str] = {
     'post_trial_ladder': 'email_post_trial',
     'expired_discount_wave2': 'email_winback_w2',
@@ -215,6 +240,7 @@ async def run_lifecycle_emails(db: AsyncSession, now: datetime | None = None) ->
     if enabled is None or enabled.lower() != 'true':
         return {}
     current_time = now or datetime.now(UTC)
+    await _ensure_tracking_campaigns(db)
     overrides = {rule.__dict__['key']: rule for rule in await get_all_rules(db)}
     batch_limit = max(1, int(getattr(settings, 'LIFECYCLE_TRIGGERS_BATCH_LIMIT', 100)))
     totals: dict[str, int] = {}
