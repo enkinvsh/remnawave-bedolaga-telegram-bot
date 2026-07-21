@@ -19,6 +19,8 @@ from app.config import settings
 logger = structlog.get_logger(__name__)
 POSTBOX_PATH: Final = '/v2/email/outbound-emails'
 CONTENT_TYPE: Final = 'application/json'
+POSTBOX_RETRY_DELAYS: Final = (1, 3)
+POSTBOX_SEND_PACING_SECONDS: Final = 0.15
 
 
 class _PostboxContent(TypedDict):
@@ -128,15 +130,22 @@ async def _send_postbox(
     headers = _postbox_headers(payload, datetime.now(UTC))
     url = f'{settings.POSTBOX_ENDPOINT.rstrip("/")}{POSTBOX_PATH}'
     try:
+        await asyncio.sleep(POSTBOX_SEND_PACING_SECONDS)
         timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=20)
-        async with aiohttp.ClientSession(timeout=timeout) as session, session.post(
-            url, data=payload.encode(), headers=headers
-        ) as response:
-            response.raise_for_status()
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            for attempt in range(len(POSTBOX_RETRY_DELAYS) + 1):
+                try:
+                    async with session.post(url, data=payload.encode(), headers=headers) as response:
+                        response.raise_for_status()
+                    return True
+                except aiohttp.ClientResponseError as error:
+                    if error.status != 429 or attempt == len(POSTBOX_RETRY_DELAYS):
+                        raise
+                    await asyncio.sleep(POSTBOX_RETRY_DELAYS[attempt])
     except aiohttp.ClientError as error:
         logger.error('Postbox email delivery failed', error=error, recipient=to)
         return False
-    return True
+    return False
 
 
 async def send_email(
