@@ -45,6 +45,20 @@ def _unsubscribe_url(user_id: int) -> str:
     token = quote(create_unsubscribe_token(user_id), safe='')
     return f'{_cabinet_url()}/email/unsubscribe?token={token}'
 
+_EVENT_CAMPAIGNS: dict[str, str] = {
+    'post_trial_ladder': 'email_post_trial',
+    'expired_discount_wave2': 'email_winback_w2',
+    'expired_discount_wave3': 'email_winback_w3',
+}
+
+
+def _tracked_cabinet_url(campaign: str) -> str:
+    return (
+        f'{_cabinet_url()}?campaign={campaign}'
+        f'&utm_source=email&utm_medium=email&utm_campaign={campaign}'
+    )
+
+
 
 def _promo_headers(user_id: int) -> dict[str, str]:
     url = _unsubscribe_url(user_id)
@@ -116,7 +130,7 @@ async def _send_trial_ending(
         title='Пробный доступ скоро закончится',
         body_html=body,
         cta_text='Открыть личный кабинет',
-        cta_url=_cabinet_url(),
+        cta_url=_tracked_cabinet_url('email_trial_ending'),
     )
     return await send_email(
         to=candidate.user.email,
@@ -158,7 +172,7 @@ async def _send_discount(
         title=f'Скидка {percent}% уже активна',
         body_html=body,
         cta_text='Открыть личный кабинет',
-        cta_url=_cabinet_url(),
+        cta_url=_tracked_cabinet_url(_EVENT_CAMPAIGNS.get(notification_type, 'email_lifecycle')),
         unsubscribe_html=_unsubscribe_html(candidate.user.id),
     )
     return await send_email(
