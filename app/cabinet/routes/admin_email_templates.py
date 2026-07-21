@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models import User
 
 from ..dependencies import get_cabinet_db, require_permission
-from ..services.email_layout import render_branded_email_if_enabled
+from ..services.email_layout import EMAIL_SERVICE_CTA_TEXT, email_service_cta_url, render_branded_email_if_enabled
 from ..services.email_template_overrides import (
     COMMON_CONTEXT_VARS,
     build_common_context,
@@ -819,12 +819,13 @@ async def preview_template(
 
     language = data.language if data.language in AVAILABLE_LANGUAGES else 'ru'
     sample_context = _build_sample_context(notification_type)
+    templates = EmailNotificationTemplates()
 
     if data.body_html:
         # Preview custom content — substitute sample values, then wrap
         # (auto-detects styled vs simple HTML)
         body_html = substitute_context_vars(data.body_html, sample_context)
-        rendered_html = EmailNotificationTemplates()._wrap_override_template(body_html, language)
+        rendered_html = templates._wrap_override_template(body_html, language)
         subject = substitute_context_vars(data.subject, sample_context, escape=False) or notification_type
     else:
         # Preview default template
@@ -836,7 +837,14 @@ async def preview_template(
             rendered_html = '<p>Template not found</p>'
             subject = 'N/A'
 
-    rendered_html = await render_branded_email_if_enabled(db, title=subject, body_html=rendered_html)
+    rendered_html = await render_branded_email_if_enabled(
+        db,
+        title=subject,
+        body_html=rendered_html,
+        content_html=templates.get_content_only_html(rendered_html),
+        cta_text=EMAIL_SERVICE_CTA_TEXT,
+        cta_url=email_service_cta_url(),
+    )
 
     return {
         'subject': subject,
