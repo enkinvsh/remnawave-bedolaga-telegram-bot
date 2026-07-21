@@ -400,6 +400,7 @@ class NotificationDeliveryService:
                     db,
                     title=template['subject'],
                     body_html=template['body_html'],
+                    include_referral=notification_type is NotificationType.BALANCE_TOPUP,
                 )
 
             success = await deliver_email(

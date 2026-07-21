@@ -1913,6 +1913,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=True, index=True)
     email_verified = Column(Boolean, default=False, nullable=False)
     email_verified_at = Column(AwareDateTime(), nullable=True)
+    promo_emails_opt_out_at = Column(AwareDateTime(), nullable=True)
     # Источник верификации email — используется как trust signal для admin escalation.
     # 'cabinet'/'oauth_google'/'oauth_discord' доверяем (real ownership proof);
     # 'oauth_vk'/'oauth_yandex' — email используется, но НЕ trusted для ADMIN_EMAILS match.

@@ -7,7 +7,7 @@
 from typing import Any
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -107,6 +107,49 @@ async def record_sent(
         await _safe_rollback(db)
         logger.warning(
             'Не удалось записать отправку lifecycle-сообщения',
+            user_id=user_id,
+            rule_key=rule_key,
+            occurrence=occurrence,
+            error=exc,
+        )
+
+
+async def reserve_send(db: AsyncSession, user_id: int, rule_key: str, occurrence: int) -> bool:
+    """Atomically reserve a lifecycle delivery key before external side effects."""
+    try:
+        db.add(LifecycleMessageLog(user_id=user_id, rule_key=rule_key, occurrence=occurrence))
+        await db.commit()
+    except IntegrityError:
+        await _safe_rollback(db)
+        return False
+    except Exception as exc:
+        await _safe_rollback(db)
+        logger.warning(
+            'Не удалось зарезервировать отправку lifecycle-сообщения',
+            user_id=user_id,
+            rule_key=rule_key,
+            occurrence=occurrence,
+            error=exc,
+        )
+        return False
+    return True
+
+
+async def release_send_reservation(db: AsyncSession, user_id: int, rule_key: str, occurrence: int) -> None:
+    """Release a reservation after a failed external delivery so the job can retry."""
+    try:
+        await db.execute(
+            delete(LifecycleMessageLog).where(
+                LifecycleMessageLog.user_id == user_id,
+                LifecycleMessageLog.rule_key == rule_key,
+                LifecycleMessageLog.occurrence == occurrence,
+            )
+        )
+        await db.commit()
+    except Exception as exc:
+        await _safe_rollback(db)
+        logger.warning(
+            'Не удалось освободить резерв lifecycle-сообщения',
             user_id=user_id,
             rule_key=rule_key,
             occurrence=occurrence,

@@ -6,6 +6,7 @@ from typing import Final
 from pydantic import TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cabinet.services.email_referral_block import build_referral_block
 from app.config import settings
 from app.database.crud.system_setting import get_setting_value
 from app.templates.email.fragments import NEUTRAL_DEFAULTS, cta_block, header_image_block, wordmark_block
@@ -115,10 +116,15 @@ async def render_branded_email(
     )
 
 
-async def render_branded_email_if_enabled(db: AsyncSession, *, title: str, body_html: str) -> str:
+async def render_branded_email_if_enabled(
+    db: AsyncSession, *, title: str, body_html: str, include_referral: bool = False
+) -> str:
     enabled = await get_setting_value(db, EMAIL_LAYOUT_ENABLED_KEY)
     if enabled is None or enabled.lower() != 'true':
         return body_html
     body_match = BODY_PATTERN.search(body_html)
     body_content = body_match.group('body') if body_match else body_html
+    if include_referral:
+        colors = await _theme_colors(db)
+        body_content += build_referral_block(colors['darkText'], colors['darkTextSecondary'], colors['accent'])
     return await render_branded_email(db, title=title, body_html=body_content)

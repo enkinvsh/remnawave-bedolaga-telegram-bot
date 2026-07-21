@@ -202,6 +202,7 @@ class MonitoringService:
         self._last_cleanup = datetime.now(UTC)
         self._sla_task = None
         self._lifecycle_task = None
+        self._lifecycle_email_task = None
         # In-memory fallback состояния уведомлений об ошибке автоплатежа (на случай
         # недоступности Redis). Ключ — (subscription_id, cycle_token=int(end_date.timestamp())).
         self._autopay_fail_state: dict[tuple[int, int], dict] = {}
@@ -330,6 +331,12 @@ class MonitoringService:
         except Exception as e:
             logger.error('Не удалось запустить lifecycle-триггеры', error=e)
 
+        try:
+            if not self._lifecycle_email_task or self._lifecycle_email_task.done():
+                self._lifecycle_email_task = asyncio.create_task(self._lifecycle_email_loop())
+        except Exception as e:
+            logger.error('Не удалось запустить lifecycle email-триггеры', error=e)
+
         while self.is_running:
             try:
                 await self._monitoring_cycle()
@@ -350,6 +357,11 @@ class MonitoringService:
         try:
             if self._lifecycle_task and not self._lifecycle_task.done():
                 self._lifecycle_task.cancel()
+        except Exception:
+            pass
+        try:
+            if self._lifecycle_email_task and not self._lifecycle_email_task.done():
+                self._lifecycle_email_task.cancel()
         except Exception:
             pass
 
@@ -1315,7 +1327,9 @@ class MonitoringService:
                             sent_day1 += 1
 
                 # Second wave (2-3 days) discount
-                if NotificationSettingsService.is_second_wave_enabled() and 2 <= days_since < 4:
+                if NotificationSettingsService.is_second_wave_enabled() and NotificationSettingsService.is_second_wave_due(
+                    days_since
+                ):
                     if not await notification_sent(db, user.id, subscription.id, 'expired_discount_wave2'):
                         percent = NotificationSettingsService.get_second_wave_discount_percent()
                         valid_hours = NotificationSettingsService.get_second_wave_valid_hours()
@@ -1344,7 +1358,7 @@ class MonitoringService:
                 # Third wave (N days) discount
                 if NotificationSettingsService.is_third_wave_enabled():
                     trigger_days = NotificationSettingsService.get_third_wave_trigger_days()
-                    if trigger_days <= days_since < trigger_days + 1:
+                    if NotificationSettingsService.is_third_wave_due(days_since):
                         if not await notification_sent(db, user.id, subscription.id, 'expired_discount_wave3'):
                             percent = NotificationSettingsService.get_third_wave_discount_percent()
                             valid_hours = NotificationSettingsService.get_third_wave_valid_hours()
@@ -2850,6 +2864,28 @@ class MonitoringService:
                 break
             except Exception as e:
                 logger.error('Ошибка в lifecycle-цикле', error=e)
+            await asyncio.sleep(interval_seconds)
+
+    async def _lifecycle_email_loop(self):
+        from app.services.lifecycle_email_service import run_lifecycle_emails
+
+        try:
+            interval_minutes = max(1, int(getattr(settings, 'LIFECYCLE_TRIGGERS_INTERVAL_MINUTES', 20)))
+        except Exception:
+            interval_minutes = 20
+        interval_seconds = interval_minutes * 60
+        while self.is_running:
+            try:
+                async with AsyncSessionLocal() as db:
+                    try:
+                        await run_lifecycle_emails(db)
+                    except Exception as e:
+                        logger.error('Ошибка в цикле lifecycle email-триггеров', error=e)
+                        await db.rollback()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error('Ошибка в lifecycle email-цикле', error=e)
             await asyncio.sleep(interval_seconds)
 
     async def _log_monitoring_event(

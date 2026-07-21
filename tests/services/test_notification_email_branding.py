@@ -99,3 +99,30 @@ async def test_sender_wraps_html_when_layout_enabled(monkeypatch: pytest.MonkeyP
     assert wrapped != original_html
     assert original_html in wrapped
     assert wrapped.lower().count('<!doctype') == 1
+
+
+@pytest.mark.asyncio
+async def test_balance_topup_appends_referral_block_only_inside_enabled_layout(monkeypatch: pytest.MonkeyPatch):
+    original_html = '<p>Баланс пополнен</p>'
+    service = _service_with_template(original_html)
+    db: AsyncSession = AsyncMock()
+    deliver = AsyncMock(return_value=True)
+
+    async def no_override(*_args, **_kwargs):
+        return None
+
+    async def get_setting(_db: AsyncSession, key: str) -> str | None:
+        return 'true' if key == email_layout.EMAIL_LAYOUT_ENABLED_KEY else None
+
+    monkeypatch.setattr(notification_delivery_service, 'AsyncSessionLocal', lambda: SessionContext(db))
+    monkeypatch.setattr(notification_delivery_service, 'get_rendered_override', no_override)
+    monkeypatch.setattr(notification_delivery_service, 'deliver_email', deliver)
+    monkeypatch.setattr(email_layout, 'get_setting_value', get_setting)
+    monkeypatch.setattr(email_layout, 'build_referral_block', lambda *_args: '<section>referral</section>')
+
+    sent = await service._send_email_notification(_user(), NotificationType.BALANCE_TOPUP, {})
+
+    assert sent is True
+    delivery_call = deliver.await_args
+    assert delivery_call is not None
+    assert '<section>referral</section>' in delivery_call.kwargs['html']
