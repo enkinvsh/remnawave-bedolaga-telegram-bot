@@ -56,6 +56,22 @@ def test_default_template_renders_clean_for_every_language(type_key, lang):
     assert 'None' not in subject, f'{type_key}/{lang}: артефакт None в теме'
 
 
+@pytest.mark.parametrize('type_key', ALL_TYPE_KEYS)
+@pytest.mark.parametrize('lang', AVAILABLE_LANGUAGES)
+def test_default_template_content_path_excludes_legacy_chrome(type_key, lang):
+    sample = SAMPLE_CONTEXTS[type_key]
+    template = _get_default_template(type_key, lang, sample)
+    assert template is not None
+
+    content = EmailNotificationTemplates().get_content_only_html(template['body_html'])
+
+    assert content.strip()
+    assert 'class="header"' not in content
+    assert 'class="footer"' not in content
+    assert 'class="button"' not in content
+    assert not content.lstrip().lower().startswith(('<h1', '<h2'))
+
+
 # ============ Единый источник дефолтов в email_service ============
 
 
