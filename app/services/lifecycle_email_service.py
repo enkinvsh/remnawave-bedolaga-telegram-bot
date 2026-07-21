@@ -108,8 +108,8 @@ async def _send_trial_ending(
 ) -> bool:
     hours_before = int(config.get('hours_before', 2))
     body = (
-        f'<p>Пробный доступ заканчивается через {hours_before} ч.</p>'
-        '<p>Оформите подписку в личном кабинете, чтобы сохранить доступ к сервису.</p>'
+        f'<p>Осталось около {hours_before} ч. Оформите подписку в личном кабинете, '
+        'чтобы доступ не прервался.</p>'
     )
     html = await render_branded_email(
         db,
@@ -150,8 +150,8 @@ async def _send_discount(
     )
     expires = format_email_datetime(offer.__dict__['expires_at'])
     body = (
-        f'<p>Скидка {percent}% уже активна и автоматически применится при следующей оплате.</p>'
-        f'<p>Предложение действует до {escape(expires)}.</p>'
+        '<p>Она применится автоматически при следующей оплате — ничего вводить не нужно.</p>'
+        f'<p>Действует до {escape(expires)}.</p>'
     )
     html = await render_branded_email(
         db,
