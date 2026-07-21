@@ -5,9 +5,31 @@ Supports multiple languages: ru, en, zh, ua, fa
 """
 
 import html
-from typing import Any
+import re
+from typing import Any, Final
 
 from app.config import settings
+
+
+_CONTENT_WRAPPER_PATTERN: Final = re.compile(
+    r'<div class="content">\s*(?P<content>.*?)\s*</div>\s*<div class="footer">',
+    re.IGNORECASE | re.DOTALL,
+)
+_LEADING_TITLE_PATTERN: Final = re.compile(r'^\s*<h[12]\b[^>]*>.*?</h[12]>\s*', re.IGNORECASE | re.DOTALL)
+_CABINET_BUTTON_PATTERN: Final = re.compile(
+    r'\s*<p\b[^>]*>\s*<a\b[^>]*\bclass=["\'][^"\']*\bbutton\b[^"\']*["\'][^>]*>.*?</a>\s*</p>\s*',
+    re.IGNORECASE | re.DOTALL,
+)
+_BOILERPLATE_TEXTS: Final = (
+    'Спасибо за использование нашего сервиса!',
+    'Thank you for using our service!',
+    '感谢使用我们的服务！',
+    'Дякуємо за використання нашого сервісу!',
+)
+_BOILERPLATE_PATTERN: Final = re.compile(
+    rf'\s*<p>\s*(?:{"|".join(re.escape(text) for text in _BOILERPLATE_TEXTS)})\s*</p>\s*',
+    re.IGNORECASE,
+)
 
 
 class EmailNotificationTemplates:
@@ -74,6 +96,14 @@ class EmailNotificationTemplates:
             return None
 
         return template_func(language, context)
+
+    def get_content_only_html(self, body_html: str) -> str:
+        """Extract notification data without the legacy title, CTA, or document chrome."""
+        content_match = _CONTENT_WRAPPER_PATTERN.search(body_html)
+        content_html = content_match.group('content') if content_match else body_html
+        content_html = _LEADING_TITLE_PATTERN.sub('', content_html, count=1)
+        content_html = _CABINET_BUTTON_PATTERN.sub('', content_html)
+        return _BOILERPLATE_PATTERN.sub('', content_html).strip()
 
     def _wrap_override_template(self, content: str, language: str = 'ru') -> str:
         """Wrap override template content appropriately based on its structure.

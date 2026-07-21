@@ -304,3 +304,26 @@ async def test_preview_wraps_default_template_when_email_layout_enabled(monkeypa
     assert body.lower().count('<!doctype') == 1
     assert 'color-scheme:dark' in body
     assert '{' not in body
+
+
+@pytest.mark.asyncio
+async def test_preview_uses_content_only_and_branded_cta_when_email_layout_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def get_setting(_db: AsyncSession, key: str) -> str | None:
+        return 'true' if key == email_layout.EMAIL_LAYOUT_ENABLED_KEY else None
+
+    monkeypatch.setattr(email_layout, 'get_setting_value', get_setting)
+    monkeypatch.setattr(email_layout.settings, 'SMTP_FROM_NAME', 'Example Service')
+    monkeypatch.setattr(email_layout.settings, 'CABINET_URL', 'https://cabinet.example')
+    data = EmailTemplatePreviewRequest(language='ru')
+
+    result = await preview_template('balance_topup', data, _admin=None, db=AsyncMock())
+
+    body = result['body_html']
+    assert '<h1>Example Service</h1>' not in body
+    assert '&copy;' not in body
+    assert '<h2>Баланс успешно пополнен!</h2>' not in body
+    assert 'Спасибо за использование нашего сервиса!' not in body
+    assert body.count('background-image:linear-gradient(90deg') == 1
+    assert 'campaign=email_service' in body
