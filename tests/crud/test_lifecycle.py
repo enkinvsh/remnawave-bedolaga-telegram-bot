@@ -11,6 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from app.database.crud.lifecycle import (
     get_sent_counts,
     record_sent,
+    release_send_reservation,
+    reserve_send,
     upsert_rule,
     was_sent,
 )
@@ -130,6 +132,36 @@ async def test_record_sent_swallows_generic_error_and_rolls_back():
 
     assert db.commit.await_count == 1
     assert db.rollback.await_count == 1
+
+
+async def test_reserve_send_returns_true_after_atomic_insert():
+    db = _make_db()
+
+    reserved = await reserve_send(db, user_id=1, rule_key='trial_ending:10_email', occurrence=1)
+
+    assert reserved is True
+    assert db.commit.await_count == 1
+    row = db.add.call_args.args[0]
+    assert row.rule_key == 'trial_ending:10_email'
+
+
+async def test_reserve_send_returns_false_on_duplicate():
+    db = _make_db()
+    db.commit = AsyncMock(side_effect=IntegrityError('stmt', {}, Exception('dup')))
+
+    reserved = await reserve_send(db, user_id=1, rule_key='trial_ending:10_email', occurrence=1)
+
+    assert reserved is False
+    assert db.rollback.await_count == 1
+
+
+async def test_release_send_reservation_deletes_failed_delivery_marker():
+    db = _make_db()
+
+    await release_send_reservation(db, user_id=1, rule_key='trial_ending:10_email', occurrence=1)
+
+    assert db.execute.await_count == 1
+    assert db.commit.await_count == 1
 
 
 # ── get_sent_counts ────────────────────────────────────────────────────────
