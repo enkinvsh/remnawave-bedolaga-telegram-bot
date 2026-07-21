@@ -50,6 +50,7 @@ from .auth import router as auth_router
 from .balance import router as balance_router
 from .branding import router as branding_router
 from .contests import router as contests_router
+from .email_unsubscribe import router as email_unsubscribe_router
 from .gift import router as gift_router
 from .info import router as info_router
 from .info_pages import router as info_pages_router
@@ -83,6 +84,7 @@ router = APIRouter(prefix='/cabinet', tags=['Cabinet'], redirect_slashes=False)
 # Final path becomes `/cabinet/public/site-verification`. Has its own
 # `/public` prefix so it's clearly separated from authenticated routes.
 router.include_router(site_verification_router)
+router.include_router(email_unsubscribe_router)
 
 # Include all sub-routers
 router.include_router(auth_router)
