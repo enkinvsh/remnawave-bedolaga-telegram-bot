@@ -13,7 +13,11 @@ from typing import Any
 import structlog
 from aiogram import Bot
 
-from app.cabinet.services.email_layout import render_branded_email_if_enabled
+from app.cabinet.services.email_layout import (
+    EMAIL_SERVICE_CTA_TEXT,
+    email_service_cta_url,
+    render_branded_email_if_enabled,
+)
 from app.cabinet.services.email_template_overrides import get_rendered_override
 from app.config import settings
 from app.database.database import AsyncSessionLocal
@@ -400,6 +404,9 @@ class NotificationDeliveryService:
                     db,
                     title=template['subject'],
                     body_html=template['body_html'],
+                    content_html=self.email_templates.get_content_only_html(template['body_html']),
+                    cta_text=EMAIL_SERVICE_CTA_TEXT,
+                    cta_url=email_service_cta_url(),
                     include_referral=notification_type is NotificationType.BALANCE_TOPUP,
                 )
 

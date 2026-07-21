@@ -14,6 +14,8 @@ from app.templates.email.fragments import NEUTRAL_DEFAULTS, cta_block, header_im
 
 EMAIL_HEADER_URL_KEY: Final = 'CABINET_EMAIL_HEADER_URL'
 EMAIL_LAYOUT_ENABLED_KEY: Final = 'CABINET_EMAIL_LAYOUT_ENABLED'
+EMAIL_SERVICE_CAMPAIGN: Final = 'email_service'
+EMAIL_SERVICE_CTA_TEXT: Final = 'Открыть личный кабинет'
 BRANDING_NAME_KEY: Final = 'CABINET_BRANDING_NAME'
 THEME_COLORS_KEY: Final = 'CABINET_THEME_COLORS'
 DEFAULT_EMAIL_THEME_COLORS: Final = {
@@ -26,6 +28,14 @@ DEFAULT_EMAIL_THEME_COLORS: Final = {
 BASE_TEMPLATE: Final = (Path(__file__).parents[2] / 'templates' / 'email' / 'base.html').read_text(encoding='utf-8')
 THEME_COLORS_ADAPTER: Final = TypeAdapter(dict[str, str])
 BODY_PATTERN: Final = re.compile(r'<body\b[^>]*>(?P<body>.*)</body>', re.IGNORECASE | re.DOTALL)
+
+
+def email_service_cta_url() -> str:
+    cabinet_url = settings.CABINET_URL.rstrip('/')
+    return (
+        f'{cabinet_url}?campaign={EMAIL_SERVICE_CAMPAIGN}'
+        f'&utm_source=email&utm_medium=email&utm_campaign={EMAIL_SERVICE_CAMPAIGN}'
+    )
 
 
 def _normalize_hex(color: str) -> str:
@@ -117,14 +127,30 @@ async def render_branded_email(
 
 
 async def render_branded_email_if_enabled(
-    db: AsyncSession, *, title: str, body_html: str, include_referral: bool = False
+    db: AsyncSession,
+    *,
+    title: str,
+    body_html: str,
+    content_html: str | None = None,
+    cta_text: str | None = None,
+    cta_url: str | None = None,
+    include_referral: bool = False,
 ) -> str:
     enabled = await get_setting_value(db, EMAIL_LAYOUT_ENABLED_KEY)
     if enabled is None or enabled.lower() != 'true':
         return body_html
-    body_match = BODY_PATTERN.search(body_html)
-    body_content = body_match.group('body') if body_match else body_html
+    if content_html is None:
+        body_match = BODY_PATTERN.search(body_html)
+        body_content = body_match.group('body') if body_match else body_html
+    else:
+        body_content = content_html
     if include_referral:
         colors = await _theme_colors(db)
         body_content += build_referral_block(colors['darkText'], colors['darkTextSecondary'], colors['accent'])
-    return await render_branded_email(db, title=title, body_html=body_content)
+    return await render_branded_email(
+        db,
+        title=title,
+        body_html=body_content,
+        cta_text=cta_text,
+        cta_url=cta_url,
+    )
