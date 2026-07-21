@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru" style="margin:0;padding:0;background-color:{bg_color};color-scheme:dark;supported-color-schemes:dark;">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="color-scheme" content="dark">
+  <meta name="supported-color-schemes" content="dark">
+  <title>{subject}</title>
+</head>
+<body bgcolor="{bg_color}" style="width:100%;margin:0;padding:0;background-color:{bg_color};color:{text_color};font-family:{font_stack};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+  <div style="display:none;max-height:0;max-width:0;overflow:hidden;opacity:0;color:{bg_color};background-color:{bg_color};font-size:1px;line-height:1px;mso-hide:all;">{preheader}&#8204;&nbsp;&#847;&nbsp;&#8204;&nbsp;&#847;&nbsp;&#8204;&nbsp;&#847;&nbsp;&#8204;&nbsp;&#847;&nbsp;&#8204;&nbsp;&#847;</div>
+  <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" bgcolor="{bg_color}" style="width:100%;margin:0;padding:0;border-collapse:collapse;background-color:{bg_color};">
+    <tr>
+      <td align="center" bgcolor="{bg_color}" style="padding:24px 12px;background-color:{bg_color};">
+        <!--[if mso]>
+        <table role="presentation" width="600" border="0" cellspacing="0" cellpadding="0" align="center" bgcolor="{card_color}">
+          <tr>
+            <td>
+        <![endif]-->
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" align="center" bgcolor="{card_color}" style="width:100%;max-width:600px;border-collapse:separate;border-spacing:0;background-color:{card_color};border:1px solid {card_border_color};border-radius:{card_radius};overflow:hidden;">
+          {header_block}
+          <tr>
+            <td bgcolor="{card_color}" style="padding:28px;background-color:{card_color};color:{text_color};font-family:{font_stack};">
+              <h1 style="margin:0 0 16px;color:{text_color};font-family:{title_font_stack};font-size:28px;font-weight:600;line-height:30px;letter-spacing:-0.7px;mso-line-height-rule:exactly;">{title}</h1>
+              <div style="margin:0;color:{dim_color};font-family:{font_stack};font-size:15px;font-weight:400;line-height:24px;mso-line-height-rule:exactly;">{body_html}</div>
+              {cta_block}
+            </td>
+          </tr>
+          <tr>
+            <td bgcolor="{card_color}" style="padding:16px 28px;background-color:{card_color};color:{dim_color};font-family:{font_stack};font-size:12px;font-weight:400;line-height:18px;border-top:1px solid {footer_border_color};border-radius:0 0 {card_radius} {card_radius};mso-line-height-rule:exactly;">
+              <div style="margin:0;color:{dim_color};font-family:{font_stack};font-size:12px;line-height:18px;">{footer_note}</div>
+              <div style="margin:0;color:{muted_color};font-family:{font_stack};font-size:12px;line-height:18px;">{unsubscribe_block}</div>
+              <div style="margin:8px 0 0;color:{dim_color};font-family:{font_stack};font-size:12px;line-height:18px;">{footer_address}</div>
+            </td>
+          </tr>
+        </table>
+        <!--[if mso]>
+            </td>
+          </tr>
+        </table>
+        <![endif]-->
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
