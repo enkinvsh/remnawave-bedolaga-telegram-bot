@@ -16,26 +16,26 @@ NEUTRAL_DEFAULTS: Final[dict[str, str]] = {
     'accent_sheen_color': '#306bec',
     'accent_text_color': '#ffffff',
     'button_radius': '26px',
-    'font_stack': 'Outfit, \'Onest\', -apple-system, \'Segoe UI\', Roboto, Arial, sans-serif',
-    'title_font_stack': '\'Unbounded\', Outfit, \'Onest\', -apple-system, \'Segoe UI\', Roboto, Arial, sans-serif',
+    'font_stack': "Outfit, 'Onest', -apple-system, 'Segoe UI', Roboto, Arial, sans-serif",
+    'title_font_stack': "'Unbounded', Outfit, 'Onest', -apple-system, 'Segoe UI', Roboto, Arial, sans-serif",
 }
 
-HEADER_IMAGE_BLOCK: Final[str] = '''<tr>
+HEADER_IMAGE_BLOCK: Final[str] = """<tr>
   <td style="padding:0;line-height:0;border-radius:{card_radius} {card_radius} 0 0;overflow:hidden;">
     <img src="{url}" width="600" alt="{alt}" border="0"
       style="display:block;width:100%;max-width:600px;height:auto;border:0;
       border-radius:{card_radius} {card_radius} 0 0;outline:none;text-decoration:none;">
   </td>
-</tr>'''
+</tr>"""
 
-WORDMARK_BLOCK: Final[str] = '''<tr>
+WORDMARK_BLOCK: Final[str] = """<tr>
   <td style="padding:24px 28px;color:{text_color};font-family:{font_stack};font-size:20px;font-weight:600;
     line-height:24px;letter-spacing:-0.3px;border-radius:{card_radius} {card_radius} 0 0;">
     {name}
   </td>
-</tr>'''
+</tr>"""
 
-CTA_BLOCK: Final[str] = '''<table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0"
+CTA_BLOCK: Final[str] = """<table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0"
   bgcolor="{accent_color}"
   style="width:100%;border-collapse:separate;background-color:{accent_color};margin-top:24px;
   border-radius:{button_radius};">
@@ -53,7 +53,7 @@ CTA_BLOCK: Final[str] = '''<table role="presentation" width="100%" border="0" ce
         white-space:nowrap;">{text}</a>
     </td>
   </tr>
-</table>'''
+</table>"""
 
 
 def header_image_block(url: str, alt: str, card_radius: str) -> str:
