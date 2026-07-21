@@ -4,17 +4,36 @@
 ``lifecycle_message_log`` — дедуп-журнал (одна строка = один отправленный шаг).
 """
 
-from typing import Any
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Final
 
 import structlog
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import LifecycleMessageLog, LifecycleRule
+from app.database.models import LifecycleMessageLog, LifecycleRule, User
 
 
 logger = structlog.get_logger(__name__)
+_EMAIL_RECENT_LIMIT: Final = 20
+
+
+@dataclass(frozen=True, slots=True)
+class EmailLifecycleRecentDelivery:
+    event_key: str
+    user_id: int
+    email: str
+    sent_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class EmailLifecycleStats:
+    optout_count: int
+    audience_count: int
+    totals_30d: dict[str, int]
+    recent: list[EmailLifecycleRecentDelivery]
 
 
 async def get_all_rules(db: AsyncSession) -> list[LifecycleRule]:
@@ -45,8 +64,8 @@ async def upsert_rule(
         rule = LifecycleRule(key=key, enabled=bool(enabled), config=config)
         db.add(rule)
     else:
-        rule.enabled = bool(enabled)
-        rule.config = config
+        rule.__dict__['enabled'] = bool(enabled)
+        rule.__dict__['config'] = config
 
     await db.commit()
     await db.refresh(rule)
@@ -173,6 +192,58 @@ async def get_sent_counts(db: AsyncSession, rule_keys: list[str]) -> dict[str, i
         .group_by(LifecycleMessageLog.rule_key)
     )
     return {row[0]: (row[1] or 0) for row in result.all()}
+
+
+async def get_email_lifecycle_stats(
+    db: AsyncSession,
+    event_keys: tuple[str, ...],
+    since: datetime,
+) -> EmailLifecycleStats:
+    """Aggregate lifecycle-email audience and delivery statistics."""
+    counts_result = await db.execute(
+        select(
+            func.count(User.id).filter(User.promo_emails_opt_out_at.is_not(None)),
+            func.count(User.id).filter(User.email_verified.is_(True), User.telegram_id.is_(None)),
+        )
+    )
+    optout_count, audience_count = counts_result.one()
+
+    event_conditions = [
+        (LifecycleMessageLog.rule_key.like(f'{event_key.removesuffix("_email")}:%\\_email', escape='\\'), event_key)
+        for event_key in event_keys
+    ]
+    delivery_filter = or_(*(condition for condition, _event_key in event_conditions))
+    event_key_case = case(*event_conditions)
+    totals_result = await db.execute(
+        select(event_key_case.label('event_key'), func.count(LifecycleMessageLog.id))
+        .where(delivery_filter, LifecycleMessageLog.sent_at >= since)
+        .group_by(event_key_case)
+    )
+    totals_30d = dict.fromkeys(event_keys, 0)
+    totals_30d.update({event_key: count for event_key, count in totals_result.all()})
+
+    recent_result = await db.execute(
+        select(
+            event_key_case.label('event_key'),
+            LifecycleMessageLog.user_id,
+            User.email,
+            LifecycleMessageLog.sent_at,
+        )
+        .join(User, User.id == LifecycleMessageLog.user_id)
+        .where(delivery_filter, User.email.is_not(None))
+        .order_by(LifecycleMessageLog.sent_at.desc())
+        .limit(_EMAIL_RECENT_LIMIT)
+    )
+    recent = [
+        EmailLifecycleRecentDelivery(event_key=event_key, user_id=user_id, email=email, sent_at=sent_at)
+        for event_key, user_id, email, sent_at in recent_result.all()
+    ]
+    return EmailLifecycleStats(
+        optout_count=optout_count or 0,
+        audience_count=audience_count or 0,
+        totals_30d=totals_30d,
+        recent=recent,
+    )
 
 
 async def _safe_rollback(db: AsyncSession) -> None:

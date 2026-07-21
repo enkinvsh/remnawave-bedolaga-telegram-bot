@@ -4,10 +4,12 @@
 обёрток (маппинг, самокоммит, fire-and-forget дедуп), а не сам SQL.
 """
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 from sqlalchemy.exc import IntegrityError
 
+from app.database.crud import lifecycle as lifecycle_crud
 from app.database.crud.lifecycle import (
     get_sent_counts,
     record_sent,
@@ -186,3 +188,45 @@ async def test_get_sent_counts_aggregates_in_one_query():
     assert result == {'expired_1d': 3, 'trial_ending': 1}
     assert 'unused' not in result  # без отправок → caller подставит 0
     assert db.execute.await_count == 1
+
+
+async def test_get_email_lifecycle_stats_aggregates_seeded_send_log_and_user_rows():
+    now = datetime(2026, 7, 22, 12, tzinfo=UTC)
+    counts_result = MagicMock()
+    counts_result.one.return_value = (2, 3)
+    totals_result = MagicMock()
+    totals_result.all.return_value = [('trial_ending_email', 2), ('post_trial_ladder_email', 1)]
+    recent_result = MagicMock()
+    recent_result.all.return_value = [
+        ('trial_ending_email', 7, 'longaddress@example.com', now),
+        ('post_trial_ladder_email', 8, 'jo@example.com', now),
+    ]
+    db = _make_db()
+    db.execute = AsyncMock(side_effect=[counts_result, totals_result, recent_result])
+    get_stats = getattr(lifecycle_crud, 'get_email_lifecycle_stats', None)
+
+    assert get_stats is not None
+    stats = await get_stats(
+        db,
+        (
+            'trial_ending_email',
+            'post_trial_ladder_email',
+            'expired_discount_wave2_email',
+            'expired_discount_wave3_email',
+        ),
+        now,
+    )
+
+    assert stats.optout_count == 2
+    assert stats.audience_count == 3
+    assert stats.totals_30d == {
+        'trial_ending_email': 2,
+        'post_trial_ladder_email': 1,
+        'expired_discount_wave2_email': 0,
+        'expired_discount_wave3_email': 0,
+    }
+    assert [(item.event_key, item.user_id, item.email) for item in stats.recent] == [
+        ('trial_ending_email', 7, 'longaddress@example.com'),
+        ('post_trial_ladder_email', 8, 'jo@example.com'),
+    ]
+    assert 'lifecycle_message_log.sent_at >=' in str(db.execute.await_args_list[1].args[0])
