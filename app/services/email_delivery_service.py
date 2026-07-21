@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from email.utils import formataddr
 from functools import partial
 from html import unescape
-from typing import Final, assert_never
+from typing import Final, NotRequired, TypedDict, assert_never
 from urllib.parse import urlparse
 
 import aiohttp
@@ -19,6 +19,27 @@ from app.config import settings
 logger = structlog.get_logger(__name__)
 POSTBOX_PATH: Final = '/v2/email/outbound-emails'
 CONTENT_TYPE: Final = 'application/json'
+
+
+class _PostboxContent(TypedDict):
+    Data: str
+    Charset: str
+
+
+class _PostboxBody(TypedDict):
+    Html: _PostboxContent
+    Text: _PostboxContent
+
+
+class _PostboxMessageHeader(TypedDict):
+    Name: str
+    Value: str
+
+
+class _PostboxSimpleContent(TypedDict):
+    Subject: _PostboxContent
+    Body: _PostboxBody
+    Headers: NotRequired[list[_PostboxMessageHeader]]
 
 
 def _sign(key: bytes, message: str) -> bytes:
@@ -75,25 +96,30 @@ def _from_address() -> str | None:
     return formataddr((settings.SMTP_FROM_NAME, from_email))
 
 
-async def _send_postbox(*, to: str, subject: str, html: str, text: str | None) -> bool:
+async def _send_postbox(
+    *, to: str, subject: str, html: str, text: str | None, headers: dict[str, str] | None = None
+) -> bool:
     from_address = _from_address()
     if not from_address or not settings.POSTBOX_ACCESS_KEY_ID or not settings.POSTBOX_SECRET_ACCESS_KEY:
         logger.error('Postbox email provider is not configured')
         return False
 
     text_body = text if text is not None else unescape(re.sub(r'<[^>]+>', '', html))
+    simple_content: _PostboxSimpleContent = {
+        'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+        'Body': {
+            'Html': {'Data': html, 'Charset': 'UTF-8'},
+            'Text': {'Data': text_body, 'Charset': 'UTF-8'},
+        },
+    }
+    if headers:
+        simple_content['Headers'] = [{'Name': name, 'Value': value} for name, value in headers.items()]
     payload = json.dumps(
         {
             'FromEmailAddress': from_address,
             'Destination': {'ToAddresses': [to]},
             'Content': {
-                'Simple': {
-                    'Subject': {'Data': subject, 'Charset': 'UTF-8'},
-                    'Body': {
-                        'Html': {'Data': html, 'Charset': 'UTF-8'},
-                        'Text': {'Data': text_body, 'Charset': 'UTF-8'},
-                    },
-                }
+                'Simple': simple_content,
             },
         },
         ensure_ascii=False,
@@ -113,20 +139,32 @@ async def _send_postbox(*, to: str, subject: str, html: str, text: str | None) -
     return True
 
 
-async def send_email(*, to: str, subject: str, html: str, text: str | None) -> bool:
+async def send_email(
+    *, to: str, subject: str, html: str, text: str | None, headers: dict[str, str] | None = None
+) -> bool:
     match settings.EMAIL_PROVIDER:
         case 'smtp':
             from app.cabinet.services.email_service import email_service
 
-            send_smtp = partial(
-                email_service.send_email,
-                to_email=to,
-                subject=subject,
-                body_html=html,
-                body_text=text,
-            )
+            if headers:
+                send_smtp = partial(
+                    email_service.send_email,
+                    to_email=to,
+                    subject=subject,
+                    body_html=html,
+                    body_text=text,
+                    headers=headers,
+                )
+            else:
+                send_smtp = partial(
+                    email_service.send_email,
+                    to_email=to,
+                    subject=subject,
+                    body_html=html,
+                    body_text=text,
+                )
             return await asyncio.to_thread(send_smtp)
         case 'postbox':
-            return await _send_postbox(to=to, subject=subject, html=html, text=text)
+            return await _send_postbox(to=to, subject=subject, html=html, text=text, headers=headers)
         case unreachable:
             assert_never(unreachable)

@@ -81,6 +81,7 @@ class EmailService:
         subject: str,
         body_html: str,
         body_text: str | None = None,
+        headers: dict[str, str] | None = None,
     ) -> bool:
         """
         Send an email.
@@ -116,6 +117,9 @@ class EmailService:
             msg['To'] = to_email
             msg['Date'] = formatdate(localtime=False)
             msg['Message-ID'] = make_msgid(domain=safe_from_email.split('@')[-1])
+            for name, value in (headers or {}).items():
+                if '\n' not in name and '\r' not in name and '\n' not in value and '\r' not in value:
+                    msg[name] = value
 
             # Plain text version
             if body_text is None:

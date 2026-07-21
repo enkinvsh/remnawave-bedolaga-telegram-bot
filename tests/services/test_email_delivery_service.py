@@ -94,3 +94,56 @@ async def test_send_email_builds_sigv4_postbox_request(monkeypatch: pytest.Monke
             }
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_send_email_propagates_headers_into_postbox_payload(monkeypatch: pytest.MonkeyPatch):
+    captured = {}
+
+    class Response:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+    class Session:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        def post(self, _url, *, data, headers):
+            captured.update({'data': data, 'headers': headers})
+            return Response()
+
+    monkeypatch.setattr(settings, 'EMAIL_PROVIDER', 'postbox')
+    monkeypatch.setattr(settings, 'POSTBOX_ACCESS_KEY_ID', 'test-access-key')
+    monkeypatch.setattr(settings, 'POSTBOX_SECRET_ACCESS_KEY', 'test-secret-key')
+    monkeypatch.setattr(settings, 'EMAIL_FROM', 'Brand <mail@example.com>')
+    monkeypatch.setattr(email_delivery_service.aiohttp, 'ClientSession', Session)
+
+    sent = await email_delivery_service.send_email(
+        to='user@example.com',
+        subject='Subject',
+        html='<p>Body</p>',
+        text='Body',
+        headers={
+            'List-Unsubscribe': '<https://example.com/unsubscribe?token=x>',
+            'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        },
+    )
+
+    assert sent is True
+    payload = json.loads(captured['data'])
+    assert payload['Content']['Simple']['Headers'] == [
+        {'Name': 'List-Unsubscribe', 'Value': '<https://example.com/unsubscribe?token=x>'},
+        {'Name': 'List-Unsubscribe-Post', 'Value': 'List-Unsubscribe=One-Click'},
+    ]
