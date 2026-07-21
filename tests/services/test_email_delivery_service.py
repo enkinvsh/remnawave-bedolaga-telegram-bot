@@ -1,6 +1,7 @@
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
+import aiohttp
 import pytest
 
 from app.cabinet.services.email_service import email_service
@@ -147,3 +148,101 @@ async def test_send_email_propagates_headers_into_postbox_payload(monkeypatch: p
         {'Name': 'List-Unsubscribe', 'Value': '<https://example.com/unsubscribe?token=x>'},
         {'Name': 'List-Unsubscribe-Post', 'Value': 'List-Unsubscribe=One-Click'},
     ]
+
+
+@pytest.mark.asyncio
+async def test_postbox_retries_two_rate_limits_then_succeeds(monkeypatch: pytest.MonkeyPatch):
+    statuses = [429, 429, 200]
+    attempts = 0
+
+    class Response:
+        def __init__(self, response_status: int):
+            self.status = response_status
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        def raise_for_status(self):
+            if self.status == 429:
+                raise aiohttp.ClientResponseError(MagicMock(), (), status=429)
+
+    class Session:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        def post(self, _url, *, data, headers):
+            nonlocal attempts
+            response = Response(statuses[attempts])
+            attempts += 1
+            return response
+
+    sleep = AsyncMock()
+    monkeypatch.setattr(settings, 'EMAIL_PROVIDER', 'postbox')
+    monkeypatch.setattr(settings, 'POSTBOX_ACCESS_KEY_ID', 'test-access-key')
+    monkeypatch.setattr(settings, 'POSTBOX_SECRET_ACCESS_KEY', 'test-secret-key')
+    monkeypatch.setattr(settings, 'EMAIL_FROM', 'Brand <mail@example.com>')
+    monkeypatch.setattr(email_delivery_service.aiohttp, 'ClientSession', Session)
+    monkeypatch.setattr(email_delivery_service.asyncio, 'sleep', sleep)
+
+    sent = await email_delivery_service.send_email(
+        to='user@example.com', subject='Subject', html='<p>Body</p>', text='Body'
+    )
+
+    assert sent is True
+    assert attempts == 3
+    assert [call.args[0] for call in sleep.await_args_list] == [0.15, 1, 3]
+
+
+@pytest.mark.asyncio
+async def test_postbox_stops_after_third_rate_limit(monkeypatch: pytest.MonkeyPatch):
+    attempts = 0
+
+    class Response:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        def raise_for_status(self):
+            raise aiohttp.ClientResponseError(MagicMock(), (), status=429)
+
+    class Session:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        def post(self, _url, *, data, headers):
+            nonlocal attempts
+            attempts += 1
+            return Response()
+
+    sleep = AsyncMock()
+    monkeypatch.setattr(settings, 'EMAIL_PROVIDER', 'postbox')
+    monkeypatch.setattr(settings, 'POSTBOX_ACCESS_KEY_ID', 'test-access-key')
+    monkeypatch.setattr(settings, 'POSTBOX_SECRET_ACCESS_KEY', 'test-secret-key')
+    monkeypatch.setattr(settings, 'EMAIL_FROM', 'Brand <mail@example.com>')
+    monkeypatch.setattr(email_delivery_service.aiohttp, 'ClientSession', Session)
+    monkeypatch.setattr(email_delivery_service.asyncio, 'sleep', sleep)
+
+    sent = await email_delivery_service.send_email(
+        to='user@example.com', subject='Subject', html='<p>Body</p>', text='Body'
+    )
+
+    assert sent is False
+    assert attempts == 3
+    assert [call.args[0] for call in sleep.await_args_list] == [0.15, 1, 3]

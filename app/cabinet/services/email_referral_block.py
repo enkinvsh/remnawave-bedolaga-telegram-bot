@@ -10,7 +10,10 @@ def _rubles(kopeks: int) -> str:
 def build_referral_block(text_color: str, dim_color: str, accent_color: str) -> str:
     if not settings.REFERRAL_PROGRAM_ENABLED:
         return ''
-    referral_url = f'{settings.CABINET_URL.rstrip("/")}/referral'
+    referral_url = (
+        f'{settings.CABINET_URL.rstrip("/")}/referral'
+        '?campaign=email_referral_block&utm_source=email&utm_medium=email&utm_campaign=email_referral_block'
+    )
     return (
         f'<div style="margin-top:24px;padding:18px;border:1px solid {escape(accent_color)};border-radius:14px;">'
         f'<p style="margin:0 0 8px;color:{escape(text_color)};font-weight:700;">'
