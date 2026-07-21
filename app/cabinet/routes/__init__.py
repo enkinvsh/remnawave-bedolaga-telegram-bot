@@ -14,6 +14,7 @@ from .admin_button_styles import router as admin_button_styles_router
 from .admin_campaigns import router as admin_campaigns_router
 from .admin_channel_posts import router as admin_channel_posts_router
 from .admin_channels import router as admin_channels_router
+from .admin_email_lifecycle import router as admin_email_lifecycle_router
 from .admin_email_templates import router as admin_email_templates_router
 from .admin_info_pages import router as admin_info_pages_router
 from .admin_landings import router as admin_landings_router
@@ -148,6 +149,7 @@ router.include_router(admin_payments_router)
 router.include_router(admin_promo_offers_router)
 router.include_router(admin_remnawave_router)
 router.include_router(admin_email_templates_router)
+router.include_router(admin_email_lifecycle_router)
 router.include_router(admin_updates_router)
 router.include_router(admin_traffic_router)
 router.include_router(admin_pinned_messages_router)
