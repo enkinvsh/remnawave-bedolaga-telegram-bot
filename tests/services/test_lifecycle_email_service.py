@@ -87,6 +87,26 @@ async def test_toggle_off_makes_whole_service_noop(monkeypatch: pytest.MonkeyPat
     db.execute.assert_not_awaited()
 
 
+async def test_tracking_campaigns_include_service_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.database.crud import campaign as campaign_crud
+
+    get_campaign = AsyncMock(return_value=None)
+    create_campaign = AsyncMock()
+    monkeypatch.setattr(service, '_tracking_campaigns_ensured', False)
+    monkeypatch.setattr(campaign_crud, 'get_campaign_by_start_parameter', get_campaign)
+    monkeypatch.setattr(campaign_crud, 'create_campaign', create_campaign)
+    db = AsyncMock()
+
+    await service._ensure_tracking_campaigns(db)
+
+    service_campaigns = [call.kwargs for call in create_campaign.await_args_list]
+    assert {
+        'name': 'Email: сервисные уведомления',
+        'start_parameter': 'email_service',
+        'bonus_type': 'none',
+    } in service_campaigns
+
+
 @pytest.mark.parametrize(
     ('selector', 'config'),
     [

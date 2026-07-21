@@ -6,7 +6,7 @@ from urllib.parse import quote
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.cabinet.services.email_layout import render_branded_email
+from app.cabinet.services.email_layout import EMAIL_SERVICE_CAMPAIGN, render_branded_email
 from app.cabinet.services.email_unsubscribe import create_unsubscribe_token
 from app.config import settings
 from app.database.crud.discount_offer import mark_offer_claimed, upsert_discount_offer
@@ -46,6 +46,7 @@ def _unsubscribe_url(user_id: int) -> str:
     return f'{_cabinet_url()}/email/unsubscribe?token={token}'
 
 _TRACKING_CAMPAIGNS: dict[str, str] = {
+    EMAIL_SERVICE_CAMPAIGN: 'Email: сервисные уведомления',
     'email_trial_ending': 'Email: триал заканчивается',
     'email_post_trial': 'Email: лестница после трила',
     'email_winback_w2': 'Email: win-back волна 2',
