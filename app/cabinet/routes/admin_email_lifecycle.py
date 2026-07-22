@@ -162,7 +162,9 @@ async def get_email_lifecycle_timeline(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> EmailLifecycleTimelineResponse:
     return EmailLifecycleTimelineResponse(
-        days=[EmailLifecycleTimelineDay(date=item.date, by_event=item.by_event) for item in await get_timeline(db, days)]
+        days=[
+            EmailLifecycleTimelineDay(date=item.date, by_event=item.by_event) for item in await get_timeline(db, days)
+        ]
     )
 
 
@@ -270,9 +272,7 @@ async def update_email_lifecycle_rule(
     override = await get_rule(db, key)
     enabled = payload.enabled if 'enabled' in payload.model_fields_set else _resolve_rule_view(key, override).enabled
     config = (
-        payload.config
-        if 'config' in payload.model_fields_set
-        else (override.config if override is not None else {})
+        payload.config if 'config' in payload.model_fields_set else (override.config if override is not None else {})
     )
     _validate_config(config)
     rule = await upsert_rule(db, key, enabled, config)

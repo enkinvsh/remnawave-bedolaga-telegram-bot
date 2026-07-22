@@ -293,7 +293,9 @@ async def test_distinct_subscriptions_use_distinct_dedup_keys(monkeypatch: pytes
     ]
     reserve = AsyncMock(return_value=True)
     monkeypatch.setattr(service, 'get_setting_value', AsyncMock(return_value='true'))
-    monkeypatch.setattr(service, '_EVENTS', {'trial_ending_email': (AsyncMock(return_value=candidates), AsyncMock(return_value=True))})
+    monkeypatch.setattr(
+        service, '_EVENTS', {'trial_ending_email': (AsyncMock(return_value=candidates), AsyncMock(return_value=True))}
+    )
     monkeypatch.setattr(service, 'get_all_rules', AsyncMock(return_value=[]))
     monkeypatch.setattr(service, 'reserve_send', reserve)
     db = AsyncMock()

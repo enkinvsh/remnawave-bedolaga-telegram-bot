@@ -1327,8 +1327,9 @@ class MonitoringService:
                             sent_day1 += 1
 
                 # Second wave (2-3 days) discount
-                if NotificationSettingsService.is_second_wave_enabled() and NotificationSettingsService.is_second_wave_due(
-                    days_since
+                if (
+                    NotificationSettingsService.is_second_wave_enabled()
+                    and NotificationSettingsService.is_second_wave_due(days_since)
                 ):
                     if not await notification_sent(db, user.id, subscription.id, 'expired_discount_wave2'):
                         percent = NotificationSettingsService.get_second_wave_discount_percent()

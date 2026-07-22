@@ -45,7 +45,9 @@ async def render_discount_email(db: AsyncSession, spec: DiscountEmailSpec) -> Re
         cta_url=settings.CABINET_URL.rstrip('/'),
         unsubscribe_html=_unsubscribe_html(spec.user_id),
     )
-    text = f'Скидка {spec.percent}% уже активна и применится автоматически при следующей оплате. Действует до {expires}.'
+    text = (
+        f'Скидка {spec.percent}% уже активна и применится автоматически при следующей оплате. Действует до {expires}.'
+    )
     return RenderedEmail(subject, html, text)
 
 

@@ -198,9 +198,7 @@ async def select_audience(db: AsyncSession, now: datetime, cohort: Cohort = Coho
             *cohort_filters,
             ~exists().where(
                 active_subscriptions.c.user_id == User.id,
-                active_subscriptions.c.status.in_(
-                    [SubscriptionStatus.ACTIVE.value, SubscriptionStatus.LIMITED.value]
-                ),
+                active_subscriptions.c.status.in_([SubscriptionStatus.ACTIVE.value, SubscriptionStatus.LIMITED.value]),
                 active_subscriptions.c.is_trial.is_(False),
                 active_subscriptions.c.end_date > now,
             ),

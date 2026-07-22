@@ -28,8 +28,9 @@ test: ## Запустить тесты
 	uv run pytest -v
 
 .PHONY: lint
-lint: ## Проверить код (ruff check)
+lint: ## Проверить код (ruff check + format --check, как в CI)
 	uv run ruff check .
+	uv run ruff format --check .
 
 .PHONY: format
 format: ## Форматировать код (ruff format)

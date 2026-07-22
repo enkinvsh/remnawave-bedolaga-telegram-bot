@@ -38,7 +38,11 @@ async def render_test_email(
             return await render_trial_ending_email(db, 2)
         case TestSendEvent.POST_TRIAL:
             return await render_lifecycle_discount_email(
-                db, notification_type='post_trial_ladder', percent=10, expires_at=now + timedelta(hours=24), user_id=admin_id
+                db,
+                notification_type='post_trial_ladder',
+                percent=10,
+                expires_at=now + timedelta(hours=24),
+                user_id=admin_id,
             )
         case TestSendEvent.WINBACK_WAVE:
             return await render_discount_email(db, DiscountEmailSpec(25, now + timedelta(hours=72), admin_id))

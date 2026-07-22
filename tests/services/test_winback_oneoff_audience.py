@@ -84,9 +84,7 @@ async def test_both_channel_user_is_email_preferred_for_trial_cohort() -> None:
 
     selected = await audience.select_audience(db, NOW, audience.Cohort.B)
 
-    assert [(target.user.id, target.channel) for target in selected.targets] == [
-        (1, audience.TargetChannel.EMAIL)
-    ]
+    assert [(target.user.id, target.channel) for target in selected.targets] == [(1, audience.TargetChannel.EMAIL)]
 
 
 # INVALID / STALE (2026-07-22): the 4 cases below assert the OLD per-cohort winback

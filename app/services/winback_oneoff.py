@@ -135,13 +135,17 @@ async def _send_telegram_target(bot, target: TelegramTarget, message: TelegramMe
     try:
         await bot.send_message(chat_id=target.telegram_id, text=message.text, reply_markup=message.keyboard)
     except (TelegramForbiddenError, TelegramBadRequest) as exc:
-        logger.info('winback: telegram unreachable — марker kept, never retried', user_id=target.user.id, reason=str(exc))
+        logger.info(
+            'winback: telegram unreachable — марker kept, never retried', user_id=target.user.id, reason=str(exc)
+        )
     except TelegramRetryAfter:
         await anyio.sleep(RETRY_DELAY_SECONDS)
         try:
             await bot.send_message(chat_id=target.telegram_id, text=message.text, reply_markup=message.keyboard)
         except (TelegramForbiddenError, TelegramBadRequest) as exc:
-            logger.info('winback: telegram unreachable — marker kept, never retried', user_id=target.user.id, reason=str(exc))
+            logger.info(
+                'winback: telegram unreachable — marker kept, never retried', user_id=target.user.id, reason=str(exc)
+            )
     return True
 
 

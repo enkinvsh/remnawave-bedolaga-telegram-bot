@@ -87,7 +87,9 @@ async def test_audience_query_splits_cohorts_and_excludes_ineligible_users() -> 
     assert "recent_deposits.created_at >= '2026-06-24 12:00:00+00:00'" in sql
 
 
-async def test_dry_run_performs_zero_writes_or_sends(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+async def test_dry_run_performs_zero_writes_or_sends(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     audience = campaign.Audience(
         targets=(
             campaign.EmailTarget(_user(1, email='person@example.com', email_verified=True), 10, 'person@example.com'),
@@ -125,7 +127,7 @@ async def test_dry_run_performs_zero_writes_or_sends(monkeypatch: pytest.MonkeyP
         'selected_targets=1\n'
         'sample[1] cohort=a user_id=***1 channel=email email=p***@example.com telegram_id=-\n'
         'email_subject=Тема\n'
-        f"email_html_first_200=<html>{'x' * 194}\n"
+        f'email_html_first_200=<html>{"x" * 194}\n'
         'No sends, resets, or offers written. Use --apply to execute.\n'
     )
 
@@ -142,7 +144,9 @@ async def test_apply_honors_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(campaign, 'reserve_send', AsyncMock(return_value=True))
     activate = AsyncMock(return_value=NOW + timedelta(hours=72))
     monkeypatch.setattr(campaign, 'activate_discount', activate)
-    monkeypatch.setattr(campaign, 'render_campaign_email', AsyncMock(return_value=campaign.RenderedEmail('s', 'h', 't')))
+    monkeypatch.setattr(
+        campaign, 'render_campaign_email', AsyncMock(return_value=campaign.RenderedEmail('s', 'h', 't'))
+    )
     email_sender = AsyncMock(return_value=True)
     monkeypatch.setattr(campaign, 'send_email', email_sender)
     monkeypatch.setattr(campaign, 'create_bot', MagicMock(return_value=bot))
@@ -167,9 +171,7 @@ async def test_reserved_marker_prevents_resend(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(campaign, 'send_email', email_sender)
     monkeypatch.setattr(campaign, 'create_bot', MagicMock(return_value=_FakeBot()))
 
-    result = await campaign.run_campaign(
-        AsyncMock(), campaign.Options(apply=True, cohort=campaign.CohortSelection.A)
-    )
+    result = await campaign.run_campaign(AsyncMock(), campaign.Options(apply=True, cohort=campaign.CohortSelection.A))
 
     assert result == campaign.RunResult(selected=1, sent=0, skipped_reserved=1, preview_sent=False)
     activate.assert_not_awaited()
@@ -208,13 +210,10 @@ async def test_telegram_uses_menu_buy_button(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(campaign, 'activate_discount', AsyncMock(return_value=NOW + timedelta(hours=72)))
     monkeypatch.setattr(campaign, 'create_bot', MagicMock(return_value=bot))
 
-    result = await campaign.run_campaign(
-        AsyncMock(), campaign.Options(apply=True, cohort=campaign.CohortSelection.A)
-    )
+    result = await campaign.run_campaign(AsyncMock(), campaign.Options(apply=True, cohort=campaign.CohortSelection.A))
 
     assert result.sent == 1
     send_call = bot.send_message.await_args
     assert send_call is not None
     button = send_call.kwargs['reply_markup'].inline_keyboard[0][0]
     assert button.callback_data == 'menu_buy'
-

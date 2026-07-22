@@ -45,10 +45,7 @@ def _unsubscribe_html(user_id: int) -> str:
 
 
 async def render_trial_ending_email(db: AsyncSession, hours_before: int) -> RenderedEmail:
-    body = (
-        f'<p>Осталось около {hours_before} ч. Оформите подписку в личном кабинете, '
-        'чтобы доступ не прервался.</p>'
-    )
+    body = f'<p>Осталось около {hours_before} ч. Оформите подписку в личном кабинете, чтобы доступ не прервался.</p>'
     html = await render_branded_email(
         db,
         title='Пробный доступ скоро закончится',

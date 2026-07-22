@@ -126,9 +126,7 @@ async def test_settings_put_roundtrips_through_overview(monkeypatch: pytest.Monk
     monkeypatch.setattr(
         lifecycle_api,
         'get_email_lifecycle_stats',
-        AsyncMock(
-            return_value=SimpleNamespace(optout_count=0, audience_count=0, totals_30d={}, recent=[])
-        ),
+        AsyncMock(return_value=SimpleNamespace(optout_count=0, audience_count=0, totals_30d={}, recent=[])),
         raising=False,
     )
     monkeypatch.setattr(lifecycle_api, 'get_all_rules', AsyncMock(return_value=[]), raising=False)

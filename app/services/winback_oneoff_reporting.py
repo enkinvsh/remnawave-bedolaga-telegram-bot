@@ -20,14 +20,11 @@ def mask_email(value: str | None) -> str:
 
 def print_preview(cohort: Cohort, recipient: str | None, delivered: bool) -> None:
     print(
-        f'PREVIEW winback_oneoff cohort={cohort.value} recipient={mask_email(recipient)} '
-        f'sent={str(delivered).lower()}'
+        f'PREVIEW winback_oneoff cohort={cohort.value} recipient={mask_email(recipient)} sent={str(delivered).lower()}'
     )
 
 
-def print_dry_run(
-    audiences: tuple[Audience, ...], selected: tuple[CohortTarget, ...], rendered: RenderedEmail
-) -> None:
+def print_dry_run(audiences: tuple[Audience, ...], selected: tuple[CohortTarget, ...], rendered: RenderedEmail) -> None:
     print('DRY-RUN winback_oneoff')
     for audience in audiences:
         email_count = sum(target.channel is TargetChannel.EMAIL for target in audience.targets)

@@ -19,9 +19,7 @@ def test_unsubscribe_token_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize('handler', [email_unsubscribe.unsubscribe_get, email_unsubscribe.unsubscribe_post])
-async def test_unsubscribe_get_and_post_are_idempotent(
-    handler, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_unsubscribe_get_and_post_are_idempotent(handler, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, 'CABINET_JWT_SECRET', 'test-secret')
     user = SimpleNamespace(id=42, promo_emails_opt_out_at=None)
     result = SimpleNamespace(scalar_one_or_none=lambda: user)

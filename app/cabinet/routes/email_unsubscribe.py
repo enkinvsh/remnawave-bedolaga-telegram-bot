@@ -13,7 +13,9 @@ from app.database.models import User
 
 router = APIRouter(prefix='/email', tags=['Cabinet:Email'])
 PROMO_OPT_OUT_FIELD: Final = 'promo_emails_opt_out_at'
-CONFIRMATION_HTML = '<!doctype html><html lang="ru"><meta charset="utf-8"><title>Готово</title><p>Промо-письма отключены.</p></html>'
+CONFIRMATION_HTML = (
+    '<!doctype html><html lang="ru"><meta charset="utf-8"><title>Готово</title><p>Промо-письма отключены.</p></html>'
+)
 
 
 async def _unsubscribe(token: str, db: AsyncSession) -> HTMLResponse:

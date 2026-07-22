@@ -53,15 +53,12 @@ async def test_funnel_counts_only_activity_after_first_marker() -> None:
             {'rule': 'post_trial_ladder:7_email', 'marker': marker, 'later': marker + timedelta(hours=1)},
         )
         await db.execute(
-            text(
-                'INSERT INTO subscriptions VALUES '
-                '(1, 10, true, :after), (2, 20, true, :before)'
-            ),
+            text('INSERT INTO subscriptions VALUES (1, 10, true, :after), (2, 20, true, :before)'),
             {'after': marker + timedelta(days=1), 'before': marker - timedelta(days=1)},
         )
         await db.execute(
             text(
-                "INSERT INTO transactions VALUES "
+                'INSERT INTO transactions VALUES '
                 "(1, 10, 'deposit', 12000, true, :after), "
                 "(2, 10, 'deposit', 9000, true, :before), "
                 "(3, 20, 'deposit', 7000, false, :after)"
@@ -89,10 +86,7 @@ async def test_timeline_fills_days_without_markers() -> None:
     now = datetime(2026, 7, 10, 15, tzinfo=UTC)
     with connection.begin():
         await db.execute(
-            text(
-                'INSERT INTO lifecycle_message_log VALUES '
-                '(1, 10, :first, 1, :old), (2, 20, :second, 1, :today)'
-            ),
+            text('INSERT INTO lifecycle_message_log VALUES (1, 10, :first, 1, :old), (2, 20, :second, 1, :today)'),
             {
                 'first': 'winback_oneoff',
                 'second': 'trial_ending:3_email',

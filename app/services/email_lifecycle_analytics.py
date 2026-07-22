@@ -122,7 +122,10 @@ async def get_timeline(db: AsyncSession, days: int, now: datetime | None = None)
         key = sent_date.isoformat() if isinstance(sent_date, date) else str(sent_date)[:10]
         counts.setdefault(key, {})[rule_key] = count
     return [
-        TimelineDay(date=(first_date + timedelta(days=offset)).isoformat(), by_event=counts.get((first_date + timedelta(days=offset)).isoformat(), {}))
+        TimelineDay(
+            date=(first_date + timedelta(days=offset)).isoformat(),
+            by_event=counts.get((first_date + timedelta(days=offset)).isoformat(), {}),
+        )
         for offset in range(days)
     ]
 

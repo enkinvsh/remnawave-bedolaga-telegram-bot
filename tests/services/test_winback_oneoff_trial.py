@@ -92,9 +92,7 @@ async def test_trial_dry_run_plans_reset_without_writes_or_external_calls(
 
 
 @pytest.mark.parametrize('cohort', [Cohort.C, Cohort.D])
-async def test_apply_resets_cold_and_warm_trials_before_email(
-    monkeypatch: pytest.MonkeyPatch, cohort
-) -> None:
+async def test_apply_resets_cold_and_warm_trials_before_email(monkeypatch: pytest.MonkeyPatch, cohort) -> None:
     events: list[str] = []
     trial = SimpleNamespace(
         id=10,
@@ -184,9 +182,7 @@ async def test_reset_safety_skips_user_if_active_paid_subscription_would_be_touc
     monkeypatch.setattr(campaign, 'send_email', email_sender)
     monkeypatch.setattr(campaign, 'create_bot', MagicMock(return_value=_FakeBot()))
 
-    result = await campaign.run_campaign(
-        db, campaign.Options(apply=True, cohort=campaign.CohortSelection.C), now=NOW
-    )
+    result = await campaign.run_campaign(db, campaign.Options(apply=True, cohort=campaign.CohortSelection.C), now=NOW)
 
     assert result.skipped_reset == 1
     assert result.sent == 0

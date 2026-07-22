@@ -62,10 +62,7 @@ def _postbox_headers(payload: str, now: datetime) -> dict[str, str]:
     canonical_uri = f'{endpoint.path.rstrip("/")}{POSTBOX_PATH}'
     signed_headers = 'content-type;host;x-amz-content-sha256;x-amz-date'
     canonical_headers = (
-        f'content-type:{CONTENT_TYPE}\n'
-        f'host:{host}\n'
-        f'x-amz-content-sha256:{payload_hash}\n'
-        f'x-amz-date:{amz_date}\n'
+        f'content-type:{CONTENT_TYPE}\nhost:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n'
     )
     canonical_request = f'POST\n{canonical_uri}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}'
     credential_scope = f'{date_stamp}/{settings.POSTBOX_REGION}/ses/aws4_request'
