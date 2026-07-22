@@ -92,10 +92,10 @@ async def activate_email_discount(
     )
     user.promo_offer_discount_percent = discount_percent
     user.promo_offer_discount_source = notification_type
-    expires_at: datetime = offer.__dict__['expires_at']
+    expires_at: datetime = offer.expires_at
     user.promo_offer_discount_expires_at = expires_at
     user.updated_at = now
-    return await mark_offer_claimed(
+    claimed_offer = await mark_offer_claimed(
         db,
         offer,
         details={
@@ -104,6 +104,8 @@ async def activate_email_discount(
             'discount_expires_at': expires_at.isoformat(),
         },
     )
+    await db.refresh(claimed_offer, ['expires_at'])
+    return claimed_offer
 
 
 async def _send_trial_ending(
@@ -148,7 +150,7 @@ async def _send_discount(
         db,
         notification_type=notification_type,
         percent=percent,
-        expires_at=offer.__dict__['expires_at'],
+        expires_at=offer.expires_at,
         user_id=candidate.user.id,
     )
     return await send_email(
@@ -192,15 +194,15 @@ async def run_lifecycle_emails(db: AsyncSession, now: datetime | None = None) ->
         return {}
     current_time = now or datetime.now(UTC)
     await _ensure_tracking_campaigns(db)
-    overrides = {rule.__dict__['key']: rule for rule in await get_all_rules(db)}
+    overrides = {rule.key: (bool(rule.enabled), rule.config) for rule in await get_all_rules(db)}
     batch_limit = max(1, int(getattr(settings, 'LIFECYCLE_TRIGGERS_BATCH_LIMIT', 100)))
     totals: dict[str, int] = {}
     for event_key, (selector, sender) in _EVENTS.items():
         rule_key = _EVENT_RULES[event_key]
         override = overrides.get(rule_key)
-        if not (override.__dict__['enabled'] if override is not None else default_enabled(rule_key)):
+        if not (override[0] if override is not None else default_enabled(rule_key)):
             continue
-        config = merged_config(rule_key, override.__dict__['config'] if override is not None else None)
+        config = merged_config(rule_key, override[1] if override is not None else None)
         sent = 0
         offset = 0
         while sent < batch_limit:

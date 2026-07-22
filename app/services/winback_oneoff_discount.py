@@ -27,7 +27,7 @@ async def activate_discount(db: AsyncSession, target: Target, spec: DiscountSpec
         valid_hours=spec.valid_hours,
         effect_type='percent_discount',
     )
-    expires_at: datetime = offer.__dict__['expires_at']
+    expires_at: datetime = offer.expires_at
     target.user.promo_offer_discount_percent = spec.percent
     target.user.promo_offer_discount_source = EVENT_KEY
     target.user.promo_offer_discount_expires_at = expires_at

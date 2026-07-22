@@ -131,8 +131,8 @@ def _mask_email(email: str) -> str:
 
 
 def _resolve_rule_view(key: str, override: LifecycleRule | None) -> EmailLifecycleRuleView:
-    enabled = bool(override.__dict__['enabled']) if override is not None else lifecycle_rules.default_enabled(key)
-    config = lifecycle_rules.merged_config(key, override.__dict__['config'] if override is not None else None)
+    enabled = bool(override.enabled) if override is not None else lifecycle_rules.default_enabled(key)
+    config = lifecycle_rules.merged_config(key, override.config if override is not None else None)
     return EmailLifecycleRuleView(key=key, enabled=enabled, config=config)
 
 
@@ -195,7 +195,8 @@ async def send_lifecycle_test_email(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> EmailLifecycleTestSendResponse:
     now = datetime.now(UTC)
-    admin_id: int = admin.__dict__['id']
+    await db.refresh(admin, ['id'])
+    admin_id: int = admin.id
     attempt_key = (admin_id, now.date())
     attempts = _TEST_SEND_ATTEMPTS.get(attempt_key, 0)
     if attempts >= _TEST_SEND_DAILY_LIMIT:
@@ -219,7 +220,7 @@ async def get_email_lifecycle_overview(
     enabled_value = await get_setting_value(db, LIFECYCLE_EMAILS_ENABLED_KEY)
     layout_value = await get_setting_value(db, EMAIL_LAYOUT_ENABLED_KEY)
     stats = await get_email_lifecycle_stats(db, _EMAIL_EVENT_KEYS, datetime.now(UTC) - timedelta(days=30))
-    overrides = {str(rule.__dict__['key']): rule for rule in await get_all_rules(db)}
+    overrides = {str(rule.key): rule for rule in await get_all_rules(db)}
     return EmailLifecycleOverview(
         enabled=enabled_value is not None and enabled_value.lower() == 'true',
         layout_enabled=layout_value is not None and layout_value.lower() == 'true',
@@ -246,9 +247,11 @@ async def update_email_lifecycle_settings(
     admin: User = Depends(require_permission('email_templates:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> EmailLifecycleSettingsResponse:
+    await db.refresh(admin, ['telegram_id'])
+    admin_telegram_id = admin.telegram_id
     _ = await upsert_system_setting(db, LIFECYCLE_EMAILS_ENABLED_KEY, str(payload.enabled).lower())
     await db.commit()
-    logger.info('Admin set lifecycle emails', telegram_id=admin.telegram_id, enabled=payload.enabled)
+    logger.info('Admin set lifecycle emails', telegram_id=admin_telegram_id, enabled=payload.enabled)
     return EmailLifecycleSettingsResponse(enabled=payload.enabled)
 
 
@@ -262,15 +265,18 @@ async def update_email_lifecycle_rule(
     if key not in _EMAIL_RULE_KEYS:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Unknown email lifecycle rule '{key}'")
 
+    await db.refresh(admin, ['telegram_id'])
+    admin_telegram_id = admin.telegram_id
     override = await get_rule(db, key)
     enabled = payload.enabled if 'enabled' in payload.model_fields_set else _resolve_rule_view(key, override).enabled
     config = (
         payload.config
         if 'config' in payload.model_fields_set
-        else (override.__dict__['config'] if override is not None else {})
+        else (override.config if override is not None else {})
     )
     _validate_config(config)
     rule = await upsert_rule(db, key, enabled, config)
+    rule_view = _resolve_rule_view(key, rule)
     await NotificationSettingsService.reload(db)
-    logger.info('Admin updated email lifecycle rule', telegram_id=admin.telegram_id, key=key, enabled=enabled)
-    return _resolve_rule_view(key, rule)
+    logger.info('Admin updated email lifecycle rule', telegram_id=admin_telegram_id, key=key, enabled=enabled)
+    return rule_view

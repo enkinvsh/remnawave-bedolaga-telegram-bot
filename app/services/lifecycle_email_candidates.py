@@ -121,7 +121,7 @@ async def select_post_trial_email(
     for subscription in result.scalars().all():
         if subscription.user is None or subscription.end_date is None:
             continue
-        matched = compute_ladder_step(subscription.__dict__['end_date'], now, steps)
+        matched = compute_ladder_step(subscription.end_date, now, steps)
         if matched is not None:
             occurrence, step = matched
             candidates.append(

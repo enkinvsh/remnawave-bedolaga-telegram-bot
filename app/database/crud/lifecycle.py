@@ -64,8 +64,8 @@ async def upsert_rule(
         rule = LifecycleRule(key=key, enabled=bool(enabled), config=config)
         db.add(rule)
     else:
-        rule.__dict__['enabled'] = bool(enabled)
-        rule.__dict__['config'] = config
+        rule.enabled = bool(enabled)
+        rule.config = config
 
     await db.commit()
     await db.refresh(rule)
