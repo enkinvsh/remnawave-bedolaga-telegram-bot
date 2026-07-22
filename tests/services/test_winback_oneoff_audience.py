@@ -89,6 +89,11 @@ async def test_both_channel_user_is_email_preferred_for_trial_cohort() -> None:
     ]
 
 
+# INVALID / STALE (2026-07-22): the 4 cases below assert the OLD per-cohort winback
+# dedup (one rule_key per cohort). Commit e99470af intentionally switched winback dedup
+# to a single cross-cohort touch per user (rule_key LIKE 'winback%') and updated
+# tests/scripts/test_winback_oneoff.py but not this file. Left failing on purpose —
+# marked invalid, not fixed/deleted.
 @pytest.mark.parametrize(
     ('cohort', 'event_key'),
     [
