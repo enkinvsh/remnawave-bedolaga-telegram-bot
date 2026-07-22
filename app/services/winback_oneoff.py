@@ -6,7 +6,8 @@ from enum import StrEnum
 from typing import Final, assert_never
 
 import anyio
-from aiogram.exceptions import TelegramRetryAfter
+import structlog
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +39,8 @@ from app.services.winback_oneoff_reporting import print_dry_run, print_preview
 from app.services.winback_oneoff_reset import reset_trial
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 from app.utils.timezone import format_email_datetime
+
+logger = structlog.get_logger(__name__)
 
 
 RATE_DELAY_SECONDS: Final = 0.3
@@ -130,9 +133,14 @@ async def _send_email_target(target: EmailTarget, rendered: RenderedEmail) -> bo
 async def _send_telegram_target(bot, target: TelegramTarget, message: TelegramMessage) -> bool:
     try:
         await bot.send_message(chat_id=target.telegram_id, text=message.text, reply_markup=message.keyboard)
+    except (TelegramForbiddenError, TelegramBadRequest) as exc:
+        logger.info('winback: telegram unreachable — марker kept, never retried', user_id=target.user.id, reason=str(exc))
     except TelegramRetryAfter:
         await anyio.sleep(RETRY_DELAY_SECONDS)
-        await bot.send_message(chat_id=target.telegram_id, text=message.text, reply_markup=message.keyboard)
+        try:
+            await bot.send_message(chat_id=target.telegram_id, text=message.text, reply_markup=message.keyboard)
+        except (TelegramForbiddenError, TelegramBadRequest) as exc:
+            logger.info('winback: telegram unreachable — marker kept, never retried', user_id=target.user.id, reason=str(exc))
     return True
 
 
