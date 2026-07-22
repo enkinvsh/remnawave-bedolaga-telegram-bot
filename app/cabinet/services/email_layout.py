@@ -146,7 +146,13 @@ async def render_branded_email_if_enabled(
         body_content = content_html
     if include_referral:
         colors = await _theme_colors(db)
-        body_content += build_referral_block(colors['darkText'], colors['darkTextSecondary'], colors['accent'])
+        body_content += build_referral_block(
+            colors['darkText'],
+            colors['darkTextSecondary'],
+            colors['accent'],
+            _darken_hex(colors['accent'], 0.62),
+            _lighten_hex(colors['darkSurface'], 0.03),
+        )
     return await render_branded_email(
         db,
         title=title,

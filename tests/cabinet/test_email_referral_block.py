@@ -12,7 +12,7 @@ def test_referral_block_uses_settings_values(monkeypatch: pytest.MonkeyPatch, co
     monkeypatch.setattr(settings, 'REFERRAL_FIRST_TOPUP_BONUS_KOPEKS', 4_500)
     monkeypatch.setattr(settings, 'CABINET_URL', 'https://cabinet.example.com')
 
-    block = build_referral_block('#fff', '#999', '#06f')
+    block = build_referral_block('#fff', '#999', '#06f', '#023', '#161616')
 
     assert f'{commission_percent}%' in block
     assert '123 ₽' in block
@@ -23,4 +23,4 @@ def test_referral_block_uses_settings_values(monkeypatch: pytest.MonkeyPatch, co
 def test_referral_block_absent_when_program_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, 'REFERRAL_PROGRAM_ENABLED', False)
 
-    assert build_referral_block('#fff', '#999', '#06f') == ''
+    assert build_referral_block('#fff', '#999', '#06f', '#023', '#161616') == ''
