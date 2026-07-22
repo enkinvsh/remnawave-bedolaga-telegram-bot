@@ -272,10 +272,10 @@ class EmailNotificationTemplates:
         balance = context.get('formatted_balance', f'{context.get("new_balance_rubles", 0):.2f} ₽')
 
         subjects = {
-            'ru': f'Баланс пополнен на {amount}',
-            'en': f'Balance topped up by {amount}',
-            'zh': f'余额已充值 {amount}',
-            'ua': f'Баланс поповнено на {amount}',
+            'ru': 'Баланс пополнен',
+            'en': 'Balance topped up',
+            'zh': '余额已充值',
+            'ua': 'Баланс поповнено',
         }
 
         bodies = {
