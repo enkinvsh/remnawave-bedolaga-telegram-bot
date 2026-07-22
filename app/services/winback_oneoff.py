@@ -27,6 +27,7 @@ from app.services.winback_oneoff_audience import (
 )
 from app.services.winback_oneoff_discount import DiscountSpec, activate_discount
 from app.services.winback_oneoff_messages import (
+    DiscountEmailSpec,
     RenderedEmail,
     TelegramMessage,
     render_discount_email as render_campaign_email,
@@ -150,7 +151,10 @@ async def _preview_email(db: AsyncSession, options: Options, now: datetime) -> t
     cohort = _cohorts(options.cohort)[0]
     match cohort:
         case Cohort.A:
-            rendered = await render_campaign_email(db, options.percent, now + timedelta(hours=options.valid_hours), 0)
+            rendered = await render_campaign_email(
+                db,
+                DiscountEmailSpec(options.percent, now + timedelta(hours=options.valid_hours), 0),
+            )
         case Cohort.B | Cohort.C | Cohort.D:
             rendered = await render_trial_email(db, cohort, 0)
         case unreachable:
@@ -206,7 +210,8 @@ async def run_campaign(db: AsyncSession, options: Options, now: datetime | None 
                         match target:
                             case EmailTarget():
                                 rendered = await render_campaign_email(
-                                    db, options.percent, expires_at, target.user.id
+                                    db,
+                                    DiscountEmailSpec(options.percent, expires_at, target.user.id),
                                 )
                                 delivered = await _send_email_target(target, rendered)
                             case TelegramTarget():

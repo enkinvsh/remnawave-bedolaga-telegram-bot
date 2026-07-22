@@ -29,11 +29,16 @@ class TelegramMessage:
     keyboard: InlineKeyboardMarkup
 
 
-async def render_discount_email(
-    db: AsyncSession, percent: int, expires_at: datetime, user_id: int
-) -> RenderedEmail:
-    expires = format_email_datetime(expires_at)
-    subject = f'Мы обновились — и подготовили вам скидку {percent}%'
+@dataclass(frozen=True, slots=True)
+class DiscountEmailSpec:
+    percent: int
+    expires_at: datetime
+    user_id: int
+
+
+async def render_discount_email(db: AsyncSession, spec: DiscountEmailSpec) -> RenderedEmail:
+    expires = format_email_datetime(spec.expires_at)
+    subject = f'Мы обновились — и подготовили вам скидку {spec.percent}%'
     body = (
         '<p>Скидка уже активна в вашем аккаунте и применится автоматически при следующей оплате. '
         f'Действует до {escape(expires)}.</p>'
@@ -44,9 +49,9 @@ async def render_discount_email(
         body_html=body,
         cta_text='Открыть личный кабинет',
         cta_url=settings.CABINET_URL.rstrip('/'),
-        unsubscribe_html=_unsubscribe_html(user_id),
+        unsubscribe_html=_unsubscribe_html(spec.user_id),
     )
-    text = f'Скидка {percent}% уже активна и применится автоматически при следующей оплате. Действует до {expires}.'
+    text = f'Скидка {spec.percent}% уже активна и применится автоматически при следующей оплате. Действует до {expires}.'
     return RenderedEmail(subject, html, text)
 
 
