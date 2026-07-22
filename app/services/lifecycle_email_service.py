@@ -1,13 +1,10 @@
 from datetime import UTC, datetime
-from html import escape
 from typing import Any, Final
-from urllib.parse import quote
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.cabinet.services.email_layout import EMAIL_SERVICE_CAMPAIGN, render_branded_email
-from app.cabinet.services.email_unsubscribe import create_unsubscribe_token
+from app.cabinet.services.email_layout import EMAIL_SERVICE_CAMPAIGN
 from app.config import settings
 from app.database.crud.discount_offer import mark_offer_claimed, upsert_discount_offer
 from app.database.crud.lifecycle import get_all_rules, release_send_reservation, reserve_send
@@ -23,8 +20,12 @@ from app.services.lifecycle_email_candidates import (
     select_third_winback_email,
     select_trial_ending_email,
 )
+from app.services.lifecycle_email_messages import (
+    _promo_headers,
+    render_lifecycle_discount_email,
+    render_trial_ending_email,
+)
 from app.services.lifecycle_rules import default_enabled, merged_config
-from app.utils.timezone import format_email_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -36,14 +37,6 @@ _EVENT_RULES: Final = {
     'expired_discount_wave3_email': 'expired_third_wave',
 }
 
-
-def _cabinet_url() -> str:
-    return settings.CABINET_URL.rstrip('/')
-
-
-def _unsubscribe_url(user_id: int) -> str:
-    token = quote(create_unsubscribe_token(user_id), safe='')
-    return f'{_cabinet_url()}/email/unsubscribe?token={token}'
 
 _TRACKING_CAMPAIGNS: dict[str, str] = {
     EMAIL_SERVICE_CAMPAIGN: 'Email: сервисные уведомления',
@@ -70,34 +63,6 @@ async def _ensure_tracking_campaigns(db: AsyncSession) -> None:
         if existing is None:
             await create_campaign(db, name=name, start_parameter=start_parameter, bonus_type='none')
     _tracking_campaigns_ensured = True
-
-
-_EVENT_CAMPAIGNS: dict[str, str] = {
-    'post_trial_ladder': 'email_post_trial',
-    'expired_discount_wave2': 'email_winback_w2',
-    'expired_discount_wave3': 'email_winback_w3',
-}
-
-
-def _tracked_cabinet_url(campaign: str) -> str:
-    return (
-        f'{_cabinet_url()}?campaign={campaign}'
-        f'&utm_source=email&utm_medium=email&utm_campaign={campaign}'
-    )
-
-
-
-def _promo_headers(user_id: int) -> dict[str, str]:
-    url = _unsubscribe_url(user_id)
-    return {
-        'List-Unsubscribe': f'<{url}>',
-        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-    }
-
-
-def _unsubscribe_html(user_id: int) -> str:
-    url = escape(_unsubscribe_url(user_id), quote=True)
-    return f'<p style="margin:0;color:#64748b;font-size:12px;">Не хотите получать предложения? <a href="{url}" style="color:#64748b;">Отписаться</a></p>'
 
 
 def _delivery_key(event_key: str, subscription_id: int) -> str:
@@ -148,22 +113,12 @@ async def _send_trial_ending(
     _now: datetime,
 ) -> bool:
     hours_before = int(config.get('hours_before', 2))
-    body = (
-        f'<p>Осталось около {hours_before} ч. Оформите подписку в личном кабинете, '
-        'чтобы доступ не прервался.</p>'
-    )
-    html = await render_branded_email(
-        db,
-        title='Пробный доступ скоро закончится',
-        body_html=body,
-        cta_text='Открыть личный кабинет',
-        cta_url=_tracked_cabinet_url('email_trial_ending'),
-    )
+    rendered = await render_trial_ending_email(db, hours_before)
     return await send_email(
         to=candidate.user.email,
-        subject='Пробный доступ скоро закончится',
-        html=html,
-        text=f'Пробный доступ заканчивается через {hours_before} ч. Откройте личный кабинет: {_cabinet_url()}',
+        subject=rendered.subject,
+        html=rendered.html,
+        text=rendered.text,
     )
 
 
@@ -189,24 +144,18 @@ async def _send_discount(
         valid_hours=valid_hours,
         now=now,
     )
-    expires = format_email_datetime(offer.__dict__['expires_at'])
-    body = (
-        '<p>Она применится автоматически при следующей оплате — ничего вводить не нужно.</p>'
-        f'<p>Действует до {escape(expires)}.</p>'
-    )
-    html = await render_branded_email(
+    rendered = await render_lifecycle_discount_email(
         db,
-        title=f'Скидка {percent}% уже активна',
-        body_html=body,
-        cta_text='Открыть личный кабинет',
-        cta_url=_tracked_cabinet_url(_EVENT_CAMPAIGNS.get(notification_type, 'email_lifecycle')),
-        unsubscribe_html=_unsubscribe_html(candidate.user.id),
+        notification_type=notification_type,
+        percent=percent,
+        expires_at=offer.__dict__['expires_at'],
+        user_id=candidate.user.id,
     )
     return await send_email(
         to=candidate.user.email,
-        subject=f'Скидка {percent}% уже активна',
-        html=html,
-        text=f'Скидка {percent}% уже активна до {expires}. Личный кабинет: {_cabinet_url()}',
+        subject=rendered.subject,
+        html=rendered.html,
+        text=rendered.text,
         headers=_promo_headers(candidate.user.id),
     )
 

@@ -11,16 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.cabinet.services.email_layout import render_branded_email
 from app.config import settings
 from app.keyboards.inline import get_trial_keyboard
-from app.services.lifecycle_email_service import _tracked_cabinet_url, _unsubscribe_html
+from app.services.email_message import RenderedEmail
+from app.services.lifecycle_email_messages import _tracked_cabinet_url, _unsubscribe_html
 from app.services.winback_oneoff_audience import Cohort
 from app.utils.timezone import format_email_datetime
-
-
-@dataclass(frozen=True, slots=True)
-class RenderedEmail:
-    subject: str
-    html: str
-    text: str
 
 
 @dataclass(frozen=True, slots=True)

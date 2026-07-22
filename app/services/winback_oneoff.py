@@ -40,6 +40,7 @@ from app.services.winback_oneoff_reset import reset_trial
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 from app.utils.timezone import format_email_datetime
 
+
 logger = structlog.get_logger(__name__)
 
 
