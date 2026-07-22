@@ -108,7 +108,7 @@ async def test_dry_run_performs_zero_writes_or_sends(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(campaign, 'activate_discount', activate)
     monkeypatch.setattr(campaign, 'send_email', email_sender)
 
-    result = await campaign.run_campaign(db, campaign.Options())
+    result = await campaign.run_campaign(db, campaign.Options(cohort=campaign.CohortSelection.A))
 
     assert result == campaign.RunResult(selected=1, sent=0, skipped_reserved=0, preview_sent=False)
     db.add.assert_not_called()
@@ -118,14 +118,15 @@ async def test_dry_run_performs_zero_writes_or_sends(monkeypatch: pytest.MonkeyP
     email_sender.assert_not_awaited()
     assert capsys.readouterr().out == (
         'DRY-RUN winback_oneoff\n'
-        'audience_email=1\n'
-        'audience_telegram=0\n'
-        'already_sent_skipped=3\n'
+        'cohort_a_email=1\n'
+        'cohort_a_telegram=0\n'
+        'cohort_a_already_sent_skipped=3\n'
+        'planned_resets=0\n'
         'selected_targets=1\n'
-        'sample[1] user_id=***1 channel=email email=p***@example.com telegram_id=-\n'
+        'sample[1] cohort=a user_id=***1 channel=email email=p***@example.com telegram_id=-\n'
         'email_subject=Тема\n'
         f"email_html_first_200=<html>{'x' * 194}\n"
-        'No sends or offers written. Use --apply to execute.\n'
+        'No sends, resets, or offers written. Use --apply to execute.\n'
     )
 
 
@@ -147,7 +148,9 @@ async def test_apply_honors_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(campaign, 'create_bot', MagicMock(return_value=bot))
     monkeypatch.setattr(campaign.anyio, 'sleep', AsyncMock())
 
-    result = await campaign.run_campaign(AsyncMock(), campaign.Options(apply=True, limit=2))
+    result = await campaign.run_campaign(
+        AsyncMock(), campaign.Options(apply=True, limit=2, cohort=campaign.CohortSelection.A)
+    )
 
     assert result.sent == 2
     assert activate.await_count == 2
@@ -164,7 +167,9 @@ async def test_reserved_marker_prevents_resend(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(campaign, 'send_email', email_sender)
     monkeypatch.setattr(campaign, 'create_bot', MagicMock(return_value=_FakeBot()))
 
-    result = await campaign.run_campaign(AsyncMock(), campaign.Options(apply=True))
+    result = await campaign.run_campaign(
+        AsyncMock(), campaign.Options(apply=True, cohort=campaign.CohortSelection.A)
+    )
 
     assert result == campaign.RunResult(selected=1, sent=0, skipped_reserved=1, preview_sent=False)
     activate.assert_not_awaited()
@@ -203,7 +208,9 @@ async def test_telegram_uses_menu_buy_button(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(campaign, 'activate_discount', AsyncMock(return_value=NOW + timedelta(hours=72)))
     monkeypatch.setattr(campaign, 'create_bot', MagicMock(return_value=bot))
 
-    result = await campaign.run_campaign(AsyncMock(), campaign.Options(apply=True))
+    result = await campaign.run_campaign(
+        AsyncMock(), campaign.Options(apply=True, cohort=campaign.CohortSelection.A)
+    )
 
     assert result.sent == 1
     send_call = bot.send_message.await_args

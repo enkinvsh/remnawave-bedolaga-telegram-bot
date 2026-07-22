@@ -53,6 +53,7 @@ _TRACKING_CAMPAIGNS: dict[str, str] = {
     'email_winback_w3': 'Email: win-back волна 3',
     'email_referral_block': 'Email: реферальный блок',
     'winback_oneoff': 'Email: win-back разовая кампания',
+    'winback_trial': 'Email: новый пробный период',
 }
 
 _tracking_campaigns_ensured = False

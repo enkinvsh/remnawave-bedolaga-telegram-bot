@@ -2,7 +2,7 @@
 # requires-python = ">=3.13"
 # dependencies = []
 # ///
-# How to run: python scripts/winback_oneoff.py [--apply] [--limit N] [--channel email|telegram|both]
+# How to run: python scripts/winback_oneoff.py [--cohort a|b|c|d|all] [--apply] [--limit N]
 # ruff: noqa: E402
 """Container entrypoint for the safe one-off win-back campaign."""
 
@@ -19,7 +19,8 @@ if str(PROJECT_ROOT) not in sys.path:
 import anyio
 
 from app.database.database import AsyncSessionLocal
-from app.services.winback_oneoff import Channel, Options, run_campaign
+from app.services.winback_oneoff import CohortSelection, Options, run_campaign
+from app.services.winback_oneoff_audience import Channel
 
 
 def _positive_int(raw: str) -> int:
@@ -34,6 +35,9 @@ def parse_args(argv: Sequence[str] | None = None) -> Options:
     parser.add_argument('--apply', action='store_true', help='Activate offers and send messages.')
     parser.add_argument('--limit', type=_positive_int, help='Cap the selected target count.')
     parser.add_argument('--channel', choices=[channel.value for channel in Channel], default=Channel.BOTH.value)
+    parser.add_argument(
+        '--cohort', choices=[cohort.value for cohort in CohortSelection], default=CohortSelection.ALL.value
+    )
     parser.add_argument('--percent', type=_positive_int, default=25)
     parser.add_argument('--valid-hours', type=_positive_int, default=72)
     parser.add_argument('--preview-to', help='Send one sample email without touching campaign users.')
@@ -45,6 +49,7 @@ def parse_args(argv: Sequence[str] | None = None) -> Options:
         percent=args.percent,
         valid_hours=args.valid_hours,
         preview_to=args.preview_to,
+        cohort=CohortSelection(args.cohort),
     )
 
 
