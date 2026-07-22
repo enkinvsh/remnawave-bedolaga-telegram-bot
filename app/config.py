@@ -1172,6 +1172,7 @@ class Settings(BaseSettings):
     POSTBOX_REGION: str = 'ru-central1'
     POSTBOX_ACCESS_KEY_ID: str | None = None
     POSTBOX_SECRET_ACCESS_KEY: str | None = None
+    POSTBOX_DAILY_QUOTA: int | None = None
     EMAIL_FROM: str | None = None
 
     # Ban System Integration (BedolagaBan monitoring)
