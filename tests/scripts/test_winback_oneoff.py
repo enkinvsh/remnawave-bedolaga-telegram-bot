@@ -83,7 +83,7 @@ async def test_audience_query_splits_cohorts_and_excludes_ineligible_users() -> 
     assert "users.status = 'active'" in sql
     assert "active_subscriptions.status in ('active', 'limited')" in sql
     assert 'active_subscriptions.is_trial is false' in sql
-    assert "winback_logs.rule_key = 'winback_oneoff'" in sql
+    assert "winback_logs.rule_key like 'winback%'" in sql
     assert "recent_deposits.created_at >= '2026-06-24 12:00:00+00:00'" in sql
 
 
@@ -217,3 +217,4 @@ async def test_telegram_uses_menu_buy_button(monkeypatch: pytest.MonkeyPatch) ->
     assert send_call is not None
     button = send_call.kwargs['reply_markup'].inline_keyboard[0][0]
     assert button.callback_data == 'menu_buy'
+

@@ -188,7 +188,7 @@ async def select_audience(db: AsyncSession, now: datetime, cohort: Cohort = Coho
             assert_never(unreachable)
     was_sent = exists().where(
         logs.c.user_id == User.id,
-        logs.c.rule_key == event_key_for(cohort),
+        logs.c.rule_key.like('winback%'),
         logs.c.occurrence == 1,
     )
     statement = (
