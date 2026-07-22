@@ -391,13 +391,9 @@ class BackupService:
 
     def _calculate_next_backup_datetime(self, reference: datetime | None = None) -> datetime:
         reference = reference or datetime.now(UTC)
-        hours, minutes = self._parse_backup_time()
-
-        next_run = reference.replace(hour=hours, minute=minutes, second=0, microsecond=0)
-        if next_run <= reference:
-            next_run += timedelta(days=1)
-
-        return next_run
+        backup_time = self._parse_backup_time()
+        interval = self._get_backup_interval()
+        return self._next_scheduled_run(backup_time, interval, reference)
 
     def _get_backup_interval(self) -> timedelta:
         hours = self._settings.backup_interval_hours
@@ -425,6 +421,45 @@ class BackupService:
         while next_run <= now:
             next_run += interval
         return next_run
+
+    @staticmethod
+    def _next_scheduled_run(backup_time: tuple[int, int], interval: timedelta, now: datetime) -> datetime:
+        """Next backup run strictly after `now`, honouring BACKUP_INTERVAL_HOURS.
+
+        `backup_time` is the (hour, minute) parsed from BACKUP_TIME.
+
+        - Daily-or-longer intervals keep the historical "next BACKUP_TIME" semantics
+          (a once-a-day backup at a fixed wall-clock time) — unchanged for white-label
+          tenants that back up daily.
+        - Sub-daily intervals (e.g. hourly) walk the grid {BACKUP_TIME + k*interval}
+          to the next FUTURE slot. Anchoring the FIRST run to BACKUP_TIME instead
+          paused every hourly backup after a bot restart until the next BACKUP_TIME
+          (e.g. next midnight) — the observed "бэкапы отключились" hole. `_next_future_run`
+          only rescues runs AFTER the first, so the first run must be fixed here.
+
+        The grid is anchored to `now`'s date, so intervals that DIVIDE 24h (1/2/3/4/6/8/12h)
+        are restart-stable; non-divisor intervals (5/7/23h) re-phase to BACKUP_TIME on each
+        restart (deliberate — one early backup beats the up-to-24h gap of the old code).
+        `interval` must be > 0; the sole production caller (_get_backup_interval) guarantees it.
+        """
+        if interval <= timedelta(0):
+            raise ValueError(f'interval must be positive, got {interval!r}')
+
+        hours, minutes = backup_time
+        anchor = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+
+        if interval >= timedelta(days=1):
+            if anchor <= now:
+                anchor += timedelta(days=1)
+            return anchor
+
+        # Sub-daily: normalise the anchor onto the grid straddling `now`, then step to the
+        # first slot strictly after `now`.
+        while anchor > now:
+            anchor -= interval
+        while anchor <= now:
+            anchor += interval
+        return anchor
 
     def _get_models_for_backup(self, include_logs: bool) -> list[Any]:
         models = self._base_backup_models.copy()
