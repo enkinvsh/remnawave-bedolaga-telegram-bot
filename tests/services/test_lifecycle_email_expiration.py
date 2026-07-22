@@ -1,92 +1,145 @@
-from dataclasses import dataclass
-from datetime import UTC, datetime
+import sys
+from datetime import UTC, datetime, timedelta
+from importlib import import_module
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import create_engine, event, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.pool import NullPool
 
-from app.database.models import LifecycleRule
+from app.database.crud import discount_offer as discount_offer_crud, lifecycle as lifecycle_crud
+from app.database.models import (
+    DiscountOffer,
+    LifecycleMessageLog,
+    LifecycleRule,
+    Subscription,
+    SubscriptionStatus,
+    User,
+    UserStatus,
+)
 from app.services import lifecycle_email_service as service
-from app.services.lifecycle_email_candidates import EmailLifecycleTariff
+from app.services.lifecycle_email_candidates import EmailLifecycleCandidate
 
 
-NOW = datetime(2026, 7, 21, 12, 0, tzinfo=UTC)
+NOW = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
 
 
-@dataclass(slots=True)
-class FixtureUser:
-    id: int
-    email: str
-    promo_emails_opt_out_at: datetime | None
-    promo_offer_discount_percent: int
-    promo_offer_discount_source: str | None
-    promo_offer_discount_expires_at: datetime | None
-    updated_at: datetime
+@compiles(JSONB, 'sqlite')
+def _compile_jsonb_for_sqlite(_type, _compiler, **_kwargs) -> str:
+    return 'JSON'
 
 
-@dataclass(slots=True)
-class FixtureSubscription:
-    id: int
-    end_date: datetime
-    tariff: EmailLifecycleTariff | None = None
-
-
-async def test_override_values_survive_commit_between_lifecycle_events(monkeypatch: pytest.MonkeyPatch) -> None:
-    engine = create_engine('sqlite://')
-    LifecycleRule.__table__.create(engine)
-    candidate = service.EmailLifecycleCandidate(
-        user=FixtureUser(1, 'user@example.com', None, 0, None, None, NOW),
-        subscription=FixtureSubscription(10, NOW),
-        occurrence=1,
+async def test_duplicate_reservation_does_not_expire_next_real_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delitem(sys.modules, 'aiosqlite')
+    import_module('aiosqlite')
+    engine = create_async_engine(
+        'sqlite+aiosqlite:///file:lifecycle_email_expiry?mode=memory&cache=shared&uri=true',
+        poolclass=NullPool,
     )
-    first_selector = AsyncMock(return_value=[candidate])
-    second_selector = AsyncMock(return_value=[])
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    delivered_subscription_ids: list[int] = []
+
+    async def sender(
+        _db: AsyncSession,
+        candidate: EmailLifecycleCandidate,
+        _config: dict[str, Any],
+        _now: datetime,
+    ) -> bool:
+        delivered_subscription_ids.append(candidate.subscription.id)
+        return True
+
+    monkeypatch.setattr(service, 'get_setting_value', AsyncMock(return_value='true'))
+    monkeypatch.setattr(service, '_ensure_tracking_campaigns', AsyncMock())
+    monkeypatch.setattr(service, '_EVENTS', {'trial_ending_email': (service.select_trial_ending_email, sender)})
+    monkeypatch.setattr(lifecycle_crud, 'AsyncSessionLocal', session_factory, raising=False)
 
     try:
-        with Session(engine) as orm_session:
-            orm_session.add_all(
-                [
-                    LifecycleRule(key='trial_ending', enabled=True, config={'hours_before': 2}),
-                    LifecycleRule(key='post_trial_ladder', enabled=True, config={'steps': []}),
-                ]
-            )
-            orm_session.commit()
-            overrides = list(orm_session.scalars(select(LifecycleRule)))
+        async with engine.connect() as keeper:
+            for table in (
+                User.__table__,
+                Subscription.__table__,
+                LifecycleRule.__table__,
+                LifecycleMessageLog.__table__,
+            ):
+                await keeper.run_sync(table.create)
+            await keeper.commit()
 
-            def reject_implicit_sql(*_args: Any) -> None:
-                raise AssertionError('expired lifecycle overrides must not trigger implicit SQL')
+            async with session_factory() as db:
+                db.add_all(
+                    [
+                        User(
+                            id=1,
+                            email='first@example.com',
+                            email_verified=True,
+                            telegram_id=None,
+                            status=UserStatus.ACTIVE.value,
+                        ),
+                        User(
+                            id=2,
+                            email='second@example.com',
+                            email_verified=True,
+                            telegram_id=None,
+                            status=UserStatus.ACTIVE.value,
+                        ),
+                        Subscription(
+                            id=10,
+                            user_id=1,
+                            status=SubscriptionStatus.TRIAL.value,
+                            is_trial=True,
+                            end_date=NOW + timedelta(hours=1),
+                            remnawave_short_id='first',
+                        ),
+                        Subscription(
+                            id=20,
+                            user_id=2,
+                            status=SubscriptionStatus.TRIAL.value,
+                            is_trial=True,
+                            end_date=NOW + timedelta(hours=1),
+                            remnawave_short_id='second',
+                        ),
+                        LifecycleRule(key='trial_ending', enabled=True, config={'hours_before': 2}),
+                        LifecycleMessageLog(user_id=1, rule_key='trial_ending:10_email', occurrence=1),
+                    ]
+                )
+                await db.commit()
 
-            event.listen(engine, 'before_cursor_execute', reject_implicit_sql)
-
-            async def reserve_and_expire(
-                _db: AsyncSession,
-                _user_id: int,
-                _delivery_key: str,
-                _occurrence: int,
-            ) -> bool:
-                orm_session.commit()
-                return True
-
-            monkeypatch.setattr(service, 'get_setting_value', AsyncMock(return_value='true'))
-            monkeypatch.setattr(service, '_ensure_tracking_campaigns', AsyncMock())
-            monkeypatch.setattr(service, 'get_all_rules', AsyncMock(return_value=overrides))
-            monkeypatch.setattr(
-                service,
-                '_EVENTS',
-                {
-                    'trial_ending_email': (first_selector, AsyncMock(return_value=True)),
-                    'post_trial_ladder_email': (second_selector, AsyncMock(return_value=True)),
-                },
-            )
-            monkeypatch.setattr(service, 'reserve_send', reserve_and_expire)
-
-            db = AsyncMock(spec=AsyncSession)
-            result = await service.run_lifecycle_emails(db, now=NOW)
+                result = await service.run_lifecycle_emails(db, now=NOW)
     finally:
-        engine.dispose()
+        await engine.dispose()
 
     assert result == {'trial_ending_email': 1}
-    second_selector.assert_awaited_once()
+    assert delivered_subscription_ids == [20]
+
+
+async def test_claim_log_failure_does_not_rollback_caller_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    caller_db = AsyncMock(spec=AsyncSession)
+    log_db = AsyncMock(spec=AsyncSession)
+    log_session_context = AsyncMock()
+    log_session_context.__aenter__.return_value = log_db
+    log_session_factory = MagicMock(return_value=log_session_context)
+    offer = DiscountOffer(
+        id=1,
+        user_id=1,
+        subscription_id=10,
+        notification_type='post_trial_ladder',
+        discount_percent=10,
+        bonus_amount_kopeks=0,
+        expires_at=NOW + timedelta(hours=24),
+        effect_type='percent_discount',
+        is_active=True,
+    )
+
+    monkeypatch.setattr(discount_offer_crud, 'AsyncSessionLocal', log_session_factory, raising=False)
+    monkeypatch.setattr(
+        discount_offer_crud,
+        'log_promo_offer_action',
+        AsyncMock(side_effect=RuntimeError('telemetry unavailable')),
+    )
+
+    result = await discount_offer_crud.mark_offer_claimed(caller_db, offer)
+
+    assert result is offer
+    caller_db.rollback.assert_not_awaited()

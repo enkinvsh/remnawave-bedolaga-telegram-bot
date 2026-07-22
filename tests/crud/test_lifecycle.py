@@ -30,6 +30,15 @@ def _make_db() -> AsyncMock:
     return db
 
 
+def _isolate_telemetry_session(monkeypatch):
+    caller_db = _make_db()
+    telemetry_db = _make_db()
+    context = AsyncMock()
+    context.__aenter__.return_value = telemetry_db
+    monkeypatch.setattr(lifecycle_crud, 'AsyncSessionLocal', MagicMock(return_value=context))
+    return caller_db, telemetry_db
+
+
 def _execute_returning(scalar=None, all_rows=None) -> AsyncMock:
     result = MagicMock()
     result.scalar_one_or_none.return_value = scalar
@@ -91,11 +100,12 @@ async def test_was_sent_false_when_absent():
 # ── record_sent (fire-and-forget, self-commit, never raise) ────────────────
 
 
-async def test_record_sent_persists_log_row():
-    db = _make_db()
+async def test_record_sent_persists_log_row(monkeypatch):
+    caller_db, db = _isolate_telemetry_session(monkeypatch)
 
-    await record_sent(db, user_id=13, rule_key='post_trial_ladder', occurrence=3)
+    await record_sent(caller_db, user_id=13, rule_key='post_trial_ladder', occurrence=3)
 
+    caller_db.add.assert_not_called()
     db.add.assert_called_once()
     row = db.add.call_args[0][0]
     assert isinstance(row, LifecycleMessageLog)
@@ -106,62 +116,67 @@ async def test_record_sent_persists_log_row():
     assert db.rollback.await_count == 0
 
 
-async def test_record_sent_defaults_occurrence_to_one():
-    db = _make_db()
+async def test_record_sent_defaults_occurrence_to_one(monkeypatch):
+    caller_db, db = _isolate_telemetry_session(monkeypatch)
 
-    await record_sent(db, user_id=1, rule_key='expired_1d')
+    await record_sent(caller_db, user_id=1, rule_key='expired_1d')
 
     assert db.add.call_args[0][0].occurrence == 1
 
 
-async def test_record_sent_swallows_duplicate_and_rolls_back():
+async def test_record_sent_swallows_duplicate_and_rolls_back(monkeypatch):
     """UNIQUE(user, rule, occurrence) → IntegrityError проглатывается (дедуп)."""
-    db = _make_db()
+    caller_db, db = _isolate_telemetry_session(monkeypatch)
     db.commit = AsyncMock(side_effect=IntegrityError('stmt', {}, Exception('dup')))
 
     # Не должно бросить.
-    await record_sent(db, user_id=1, rule_key='expired_1d', occurrence=1)
+    await record_sent(caller_db, user_id=1, rule_key='expired_1d', occurrence=1)
 
+    caller_db.rollback.assert_not_awaited()
     assert db.commit.await_count == 1
     assert db.rollback.await_count == 1
 
 
-async def test_record_sent_swallows_generic_error_and_rolls_back():
-    db = _make_db()
+async def test_record_sent_swallows_generic_error_and_rolls_back(monkeypatch):
+    caller_db, db = _isolate_telemetry_session(monkeypatch)
     db.commit = AsyncMock(side_effect=RuntimeError('db down'))
 
-    await record_sent(db, user_id=1, rule_key='expired_1d', occurrence=1)
+    await record_sent(caller_db, user_id=1, rule_key='expired_1d', occurrence=1)
 
+    caller_db.rollback.assert_not_awaited()
     assert db.commit.await_count == 1
     assert db.rollback.await_count == 1
 
 
-async def test_reserve_send_returns_true_after_atomic_insert():
-    db = _make_db()
+async def test_reserve_send_returns_true_after_atomic_insert(monkeypatch):
+    caller_db, db = _isolate_telemetry_session(monkeypatch)
 
-    reserved = await reserve_send(db, user_id=1, rule_key='trial_ending:10_email', occurrence=1)
+    reserved = await reserve_send(caller_db, user_id=1, rule_key='trial_ending:10_email', occurrence=1)
 
     assert reserved is True
+    caller_db.add.assert_not_called()
     assert db.commit.await_count == 1
     row = db.add.call_args.args[0]
     assert row.rule_key == 'trial_ending:10_email'
 
 
-async def test_reserve_send_returns_false_on_duplicate():
-    db = _make_db()
+async def test_reserve_send_returns_false_on_duplicate(monkeypatch):
+    caller_db, db = _isolate_telemetry_session(monkeypatch)
     db.commit = AsyncMock(side_effect=IntegrityError('stmt', {}, Exception('dup')))
 
-    reserved = await reserve_send(db, user_id=1, rule_key='trial_ending:10_email', occurrence=1)
+    reserved = await reserve_send(caller_db, user_id=1, rule_key='trial_ending:10_email', occurrence=1)
 
     assert reserved is False
+    caller_db.rollback.assert_not_awaited()
     assert db.rollback.await_count == 1
 
 
-async def test_release_send_reservation_deletes_failed_delivery_marker():
-    db = _make_db()
+async def test_release_send_reservation_deletes_failed_delivery_marker(monkeypatch):
+    caller_db, db = _isolate_telemetry_session(monkeypatch)
 
-    await release_send_reservation(db, user_id=1, rule_key='trial_ending:10_email', occurrence=1)
+    await release_send_reservation(caller_db, user_id=1, rule_key='trial_ending:10_email', occurrence=1)
 
+    caller_db.execute.assert_not_awaited()
     assert db.execute.await_count == 1
     assert db.commit.await_count == 1
 

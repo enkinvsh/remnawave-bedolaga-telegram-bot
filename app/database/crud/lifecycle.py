@@ -13,6 +13,7 @@ from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database.database import AsyncSessionLocal
 from app.database.models import LifecycleMessageLog, LifecycleRule, User
 
 
@@ -92,88 +93,91 @@ async def was_sent(
 
 
 async def record_sent(
-    db: AsyncSession,
+    _db: AsyncSession,
     user_id: int,
     rule_key: str,
     occurrence: int = 1,
 ) -> None:
-    """Фиксирует факт отправки шага правила. Самокоммитится, НИКОГДА не бросает.
+    """Фиксирует факт отправки шага правила в отдельной сессии, НИКОГДА не бросает.
 
     Fire-and-forget как ``crud/campaign_starts.record_campaign_start``: сбой записи
     телеметрии не должен ломать рассылку. UNIQUE(user_id, rule_key, occurrence)
     делает повторную запись no-op (IntegrityError проглатывается) — это и есть
     гарантия дедупа: два параллельных триггера не отправят шаг дважды.
     """
-    try:
-        db.add(
-            LifecycleMessageLog(
+    async with AsyncSessionLocal() as telemetry_db:
+        try:
+            telemetry_db.add(
+                LifecycleMessageLog(
+                    user_id=user_id,
+                    rule_key=rule_key,
+                    occurrence=occurrence,
+                )
+            )
+            await telemetry_db.commit()
+        except IntegrityError:
+            # Дубликат (user, rule, occurrence) — ожидаемо, шаг уже отмечен.
+            await _safe_rollback(telemetry_db)
+            logger.debug(
+                'Шаг lifecycle-правила уже был записан, пропускаем',
                 user_id=user_id,
                 rule_key=rule_key,
                 occurrence=occurrence,
             )
-        )
-        await db.commit()
-    except IntegrityError:
-        # Дубликат (user, rule, occurrence) — ожидаемо, шаг уже отмечен.
-        await _safe_rollback(db)
-        logger.debug(
-            'Шаг lifecycle-правила уже был записан, пропускаем',
-            user_id=user_id,
-            rule_key=rule_key,
-            occurrence=occurrence,
-        )
-    except Exception as exc:
-        await _safe_rollback(db)
-        logger.warning(
-            'Не удалось записать отправку lifecycle-сообщения',
-            user_id=user_id,
-            rule_key=rule_key,
-            occurrence=occurrence,
-            error=exc,
-        )
+        except Exception as exc:
+            await _safe_rollback(telemetry_db)
+            logger.warning(
+                'Не удалось записать отправку lifecycle-сообщения',
+                user_id=user_id,
+                rule_key=rule_key,
+                occurrence=occurrence,
+                error=exc,
+            )
 
 
-async def reserve_send(db: AsyncSession, user_id: int, rule_key: str, occurrence: int) -> bool:
-    """Atomically reserve a lifecycle delivery key before external side effects."""
-    try:
-        db.add(LifecycleMessageLog(user_id=user_id, rule_key=rule_key, occurrence=occurrence))
-        await db.commit()
-    except IntegrityError:
-        await _safe_rollback(db)
-        return False
-    except Exception as exc:
-        await _safe_rollback(db)
-        logger.warning(
-            'Не удалось зарезервировать отправку lifecycle-сообщения',
-            user_id=user_id,
-            rule_key=rule_key,
-            occurrence=occurrence,
-            error=exc,
-        )
-        return False
+async def reserve_send(_db: AsyncSession, user_id: int, rule_key: str, occurrence: int) -> bool:
+    """Atomically reserve a delivery key without touching the caller transaction."""
+    async with AsyncSessionLocal() as telemetry_db:
+        try:
+            telemetry_db.add(LifecycleMessageLog(user_id=user_id, rule_key=rule_key, occurrence=occurrence))
+            await telemetry_db.commit()
+        except IntegrityError:
+            await _safe_rollback(telemetry_db)
+            return False
+        except Exception as exc:
+            await _safe_rollback(telemetry_db)
+            logger.warning(
+                'Не удалось зарезервировать отправку lifecycle-сообщения',
+                user_id=user_id,
+                rule_key=rule_key,
+                occurrence=occurrence,
+                error=exc,
+            )
+            return False
     return True
 
 
-async def release_send_reservation(db: AsyncSession, user_id: int, rule_key: str, occurrence: int) -> None:
-    """Release a reservation after a failed external delivery so the job can retry."""
-    try:
-        await db.execute(
-            delete(LifecycleMessageLog).where(
-                LifecycleMessageLog.user_id == user_id,
-                LifecycleMessageLog.rule_key == rule_key,
-                LifecycleMessageLog.occurrence == occurrence,
+async def release_send_reservation(_db: AsyncSession, user_id: int, rule_key: str, occurrence: int) -> None:
+    """Release a reservation in an isolated session so the caller can retry safely."""
+    async with AsyncSessionLocal() as telemetry_db:
+        try:
+            await telemetry_db.execute(
+                delete(LifecycleMessageLog).where(
+                    LifecycleMessageLog.user_id == user_id,
+                    LifecycleMessageLog.rule_key == rule_key,
+                    LifecycleMessageLog.occurrence == occurrence,
+                )
             )
-        )
-        await db.commit()
-    except Exception as exc:
-        await _safe_rollback(db)
-        logger.warning(
-            'Не удалось освободить резерв lifecycle-сообщения',
-            user_id=user_id,
-            rule_key=rule_key,
-            occurrence=occurrence,
-            error=exc,
-        )
+            await telemetry_db.commit()
+        except Exception as exc:
+            await _safe_rollback(telemetry_db)
+            logger.warning(
+                'Не удалось освободить резерв lifecycle-сообщения',
+                user_id=user_id,
+                rule_key=rule_key,
+                occurrence=occurrence,
+                error=exc,
+            )
 
 
 async def get_sent_counts(db: AsyncSession, rule_keys: list[str]) -> dict[str, int]:

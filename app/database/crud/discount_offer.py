@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database.crud.promo_offer_log import log_promo_offer_action
+from app.database.database import AsyncSessionLocal
 from app.database.models import DiscountOffer
 
 
@@ -167,24 +168,19 @@ async def mark_offer_claimed(
     await db.refresh(offer)
 
     try:
-        await log_promo_offer_action(
-            db,
-            user_id=offer.user_id,
-            offer_id=offer.id,
-            action='claimed',
-            source=offer.notification_type,
-            percent=offer.discount_percent,
-            effect_type=offer.effect_type,
-            details=details,
-        )
+        async with AsyncSessionLocal() as log_db:
+            await log_promo_offer_action(
+                log_db,
+                user_id=offer.user_id,
+                offer_id=offer.id,
+                action='claimed',
+                source=offer.notification_type,
+                percent=offer.discount_percent,
+                effect_type=offer.effect_type,
+                details=details,
+            )
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning('Failed to record promo offer claim log for offer', offer_id=offer.id, exc=exc)
-        try:
-            await db.rollback()
-        except Exception as rollback_error:  # pragma: no cover - defensive logging
-            logger.warning(
-                'Failed to rollback session after promo offer claim log failure', rollback_error=rollback_error
-            )
 
     return offer
 
