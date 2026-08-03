@@ -1775,7 +1775,6 @@
   "WEBHOOK_CLOSE_BUTTON": "✖️ Close",
   "TRAFFIC_WARNING_ALERT": "⚠️ <b>Traffic Warning</b>\n\nUsed: {used:.1f} / {limit} GB ({percent:.0f}%)\n\nYour traffic limit is almost reached.",
   "LOW_BALANCE_ALERT": "⚠️ <b>Low Balance</b>\n\nYour balance: {balance} ₽\nNotification threshold: {threshold} ₽\n\nTop up your balance to ensure automatic subscription renewal.",
-
   "SUBSCRIPTION_REVOKE_BTN": "🔄 Reissue Subscription",
   "SUBSCRIPTION_REVOKE_TITLE": "⚠️ Reissue Subscription",
   "SUBSCRIPTION_REVOKE_WARNING": "⚠️ <b>Reissue Subscription</b>\n\nThis action will:\n• Generate a new connection link\n• Disconnect all devices\n• The old link will stop working\n\nContinue?",
@@ -1966,7 +1965,7 @@
   "ADMIN_USERS_FILTER_POTENTIAL_CUSTOMERS_TITLE": "💰 Potential customers",
   "CHANGE_TARIFF_BUTTON": "📦 Plan",
   "BUY_TARIFF_BUTTON": "📦 Buy a plan",
-  "MAIN_MENU_TARIFF_LINE": "\n📦 Tariff: {tariff_name}",
+  "MAIN_MENU_TARIFF_LINE": "\n📦 Tariff: {tariff_name}\n\n",
   "SUB_MULTI_FALLBACK_NAME": "Subscription",
   "SUB_MULTI_SUFFIX_EXPIRED": " — expired",
   "SUB_MULTI_SUFFIX_DISABLED": " — disabled",

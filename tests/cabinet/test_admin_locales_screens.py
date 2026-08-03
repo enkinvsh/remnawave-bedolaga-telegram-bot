@@ -86,6 +86,25 @@ async def test_list_screens_reports_available_languages():
     assert 'ru' in result['available_languages']
 
 
+async def test_list_screens_offers_states():
+    result = await list_preview_screens(_admin=None)
+    main_menu = next(screen for screen in result['screens'] if screen['id'] == 'main_menu')
+
+    state_ids = [state['id'] for state in main_menu['states']]
+    assert 'expired' in state_ids
+    assert 'none' in state_ids
+    assert all(state['label'] for state in main_menu['states'])
+    assert main_menu['default_state'] in state_ids
+
+
+async def test_list_screens_declares_editable_keys():
+    result = await list_preview_screens(_admin=None)
+    main_menu = next(screen for screen in result['screens'] if screen['id'] == 'main_menu')
+
+    assert 'MAIN_MENU_TARIFF_LINE' in main_menu['keys']
+    assert 'SUB_STATUS_EXPIRED' in main_menu['keys']
+
+
 # ============ POST /screens/{id}/preview ============
 
 
@@ -156,6 +175,55 @@ async def test_preview_rejects_unsupported_language():
         )
 
     assert error.value.status_code == 400
+
+
+async def test_preview_accepts_a_state_and_echoes_it():
+    result = await preview_locale_screen(
+        'main_menu',
+        ScreenPreviewRequest(language='ru', state='expired'),
+        _admin=None,
+        db=_db(),
+    )
+
+    assert result['state'] == 'expired'
+    rendered = [entry['key'] for entry in result['keys'] if entry['rendered']]
+    assert 'SUB_STATUS_EXPIRED' in rendered
+
+
+async def test_preview_defaults_to_the_active_state():
+    result = await preview_locale_screen(
+        'main_menu',
+        ScreenPreviewRequest(language='ru'),
+        _admin=None,
+        db=_db(),
+    )
+
+    assert result['state'] == 'active_long'
+
+
+async def test_preview_rejects_unknown_state():
+    with pytest.raises(HTTPException) as error:
+        await preview_locale_screen(
+            'main_menu',
+            ScreenPreviewRequest(language='ru', state='no_such_state'),
+            _admin=None,
+            db=_db(),
+        )
+
+    assert error.value.status_code == 400
+
+
+async def test_preview_offers_keys_that_this_state_does_not_render():
+    result = await preview_locale_screen(
+        'main_menu',
+        ScreenPreviewRequest(language='ru', state='active_long'),
+        _admin=None,
+        db=_db(),
+    )
+
+    entry = next(item for item in result['keys'] if item['key'] == 'MAIN_MENU_TARIFF_LINE')
+    assert entry['rendered'] is False
+    assert entry['value']
 
 
 async def test_preview_rejects_oversized_draft_value():

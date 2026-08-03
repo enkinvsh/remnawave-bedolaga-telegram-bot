@@ -22,7 +22,7 @@ from app.database.crud.locale_override import (
 from app.database.models import User
 from app.localization.loader import DEFAULT_LANGUAGE, load_locale
 from app.localization.overrides import load_overrides
-from app.services.screen_preview import get_screen, list_screens, render_screen
+from app.services.screen_preview import get_screen, is_known_state, list_screens, render_screen
 
 from ..dependencies import get_cabinet_db, require_permission
 
@@ -103,6 +103,7 @@ class ScreenPreviewRequest(BaseModel):
     """Render one screen; ``draft`` carries unsaved edits for this render only."""
 
     language: str = Field(default=DEFAULT_LANGUAGE)
+    state: str | None = Field(default=None)
     draft: dict[str, str] | None = Field(default=None)
 
 
@@ -194,7 +195,17 @@ async def list_preview_screens(
     среди ~2000 ключей те шесть, из которых оно собрано. Здесь единица работы —
     экран.
     """
-    screens = [{'id': screen.id, 'title': screen.title, 'description': screen.description} for screen in list_screens()]
+    screens = [
+        {
+            'id': screen.id,
+            'title': screen.title,
+            'description': screen.description,
+            'keys': list(screen.keys),
+            'states': [{'id': state.id, 'label': state.label} for state in screen.states],
+            'default_state': screen.default_state,
+        }
+        for screen in list_screens()
+    ]
     return {
         'screens': screens,
         'total': len(screens),
@@ -209,19 +220,31 @@ async def preview_locale_screen(
     _admin: User = Depends(require_permission('settings:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
-    """Отрендерить экран хендлером бота и вернуть текст + использованные ключи.
+    """Отрендерить экран хендлером бота и вернуть текст + строки, из которых он собран.
+
+    ``state`` выбирает состояние подписки синтетического пользователя — именно
+    оно решает, какую строку статуса покажет экран. Ключи, до которых это
+    состояние не дотягивается, всё равно возвращаются, но с ``rendered=false``.
 
     ``draft`` — несохранённые правки; применяются ТОЛЬКО к этому рендеру и
     никогда не попадают в глобальный кеш override-ов, поэтому ручку можно
     дёргать на каждое нажатие клавиши.
     """
-    if get_screen(screen_id) is None:
+    screen = get_screen(screen_id)
+    if screen is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f'Unknown screen: {screen_id}',
         )
 
     _validate_language(data.language)
+
+    state = data.state or screen.default_state
+    if not is_known_state(state):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Unknown state: {state}. Available: {[item.id for item in screen.states]}',
+        )
 
     draft = data.draft or None
     if draft:
@@ -232,7 +255,7 @@ async def preview_locale_screen(
                     detail=f'Draft value for {key} exceeds {MAX_VALUE_LENGTH} characters',
                 )
 
-    return await render_screen(screen_id, data.language, db, draft=draft)
+    return await render_screen(screen_id, data.language, db, draft=draft, state=state)
 
 
 @router.get('/{key}', summary='Get one key across all languages')

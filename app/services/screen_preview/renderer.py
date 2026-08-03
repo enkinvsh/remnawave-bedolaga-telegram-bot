@@ -26,6 +26,7 @@ from app.localization.texts import Texts
 from app.localization.tracing import record_key, trace_keys
 
 from .registry import get_screen
+from .synthetic import DEFAULT_SYNTHETIC_STATE, is_known_state
 
 
 logger = structlog.get_logger(__name__)
@@ -65,7 +66,13 @@ def _build_texts(language: str, draft: dict[str, str] | None) -> Texts:
     return Texts(language)
 
 
-def _describe_keys(keys: list[str], language: str, draft: dict[str, str] | None) -> list[dict[str, Any]]:
+def _describe_keys(
+    keys: list[str],
+    language: str,
+    draft: dict[str, str] | None,
+    *,
+    rendered: bool,
+) -> list[dict[str, Any]]:
     """Per key: bundled default, saved override and the value actually used."""
     bundled = load_locale(language)
     fallback = bundled if language == DEFAULT_LANGUAGE else load_locale(DEFAULT_LANGUAGE)
@@ -90,6 +97,7 @@ def _describe_keys(keys: list[str], language: str, draft: dict[str, str] | None)
                 'default_value': default_value,
                 'override_value': override_value,
                 'value': value,
+                'rendered': rendered,
             }
         )
     return described
@@ -100,16 +108,27 @@ async def render_screen(
     language: str,
     db: Any,
     draft: dict[str, str] | None = None,
+    state: str | None = None,
 ) -> dict[str, Any]:
-    """Render ``screen_id`` in ``language`` and list the keys it touched.
+    """Render ``screen_id`` in ``language`` and list the strings it is made of.
+
+    ``state`` picks the synthetic user's subscription state, which decides
+    *which* status string the screen renders.
+
+    ``keys`` is the union of what this render actually touched
+    (``rendered: true``, in trace order) and everything else the screen declares
+    (``rendered: false``, in declaration order) — a state cannot reach every
+    string, but all of them must stay editable.
 
     ``draft`` maps key -> unsaved value and is applied to this render only.
-    Returns ``{'screen_id', 'language', 'text', 'keys'}``; on any failure the
-    same shape plus ``'error'``.
+    Returns ``{'screen_id', 'language', 'state', 'text', 'keys'}``; on any
+    failure the same shape plus ``'error'``.
     """
+    resolved_state = state or DEFAULT_SYNTHETIC_STATE
     payload: dict[str, Any] = {
         'screen_id': screen_id,
         'language': language,
+        'state': resolved_state,
         'text': '',
         'keys': [],
     }
@@ -124,19 +143,28 @@ async def render_screen(
             payload['error'] = f'Неизвестный язык: {language}'
             return payload
 
+        if not is_known_state(resolved_state):
+            payload['error'] = f'Неизвестное состояние: {resolved_state}'
+            return payload
+
         texts = _build_texts(language, draft)
         with trace_keys() as touched:
-            text = await screen.render(texts, db)
-            keys = list(touched)
+            text = await screen.render(texts, db, resolved_state)
+            traced = list(touched)
+
+        declared_only = [key for key in screen.keys if key not in set(traced)]
 
         payload['text'] = text or ''
-        payload['keys'] = _describe_keys(keys, language, draft)
+        payload['keys'] = _describe_keys(traced, language, draft, rendered=True) + _describe_keys(
+            declared_only, language, draft, rendered=False
+        )
         return payload
     except Exception as error:
         logger.warning(
             'Не удалось отрендерить превью экрана',
             screen_id=screen_id,
             language=language,
+            state=resolved_state,
             error=error,
         )
         payload['text'] = ''

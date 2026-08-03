@@ -8,14 +8,24 @@ built from — in the order they were touched.
 
 from .registry import ScreenDefinition, ScreenRenderer, get_screen, list_screens, register_screen
 from .renderer import render_screen, supported_languages
-from .synthetic import build_synthetic_user
+from .synthetic import (
+    DEFAULT_SYNTHETIC_STATE,
+    SYNTHETIC_STATES,
+    SyntheticState,
+    build_synthetic_user,
+    is_known_state,
+)
 
 
 __all__ = [
+    'DEFAULT_SYNTHETIC_STATE',
+    'SYNTHETIC_STATES',
     'ScreenDefinition',
     'ScreenRenderer',
+    'SyntheticState',
     'build_synthetic_user',
     'get_screen',
+    'is_known_state',
     'list_screens',
     'register_screen',
     'render_screen',

@@ -1398,7 +1398,7 @@ async def get_main_menu_text(user, texts, db: AsyncSession):
         if tariff_info_block:
             action_prompt_text = texts.t('MAIN_MENU_ACTION_PROMPT', 'Выберите действие:')
             if action_prompt_text in base_text:
-                base_text = base_text.replace(action_prompt_text, f'{tariff_info_block}\n\n{action_prompt_text}')
+                base_text = base_text.replace(action_prompt_text, f'{tariff_info_block}{action_prompt_text}')
     else:
         # Single-tariff mode: legacy behavior
         tariff = None
@@ -1427,7 +1427,7 @@ async def get_main_menu_text(user, texts, db: AsyncSession):
         if tariff_info_block:
             action_prompt_text = texts.t('MAIN_MENU_ACTION_PROMPT', 'Выберите действие:')
             if action_prompt_text in base_text:
-                base_text = base_text.replace(action_prompt_text, f'{tariff_info_block}\n\n{action_prompt_text}')
+                base_text = base_text.replace(action_prompt_text, f'{tariff_info_block}{action_prompt_text}')
 
     action_prompt = texts.t('MAIN_MENU_ACTION_PROMPT', 'Выберите действие:')
 

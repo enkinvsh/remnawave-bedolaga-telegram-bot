@@ -1797,7 +1797,6 @@
   "WEBHOOK_CLOSE_BUTTON": "✖️ Закрыть",
   "TRAFFIC_WARNING_ALERT": "⚠️ <b>Предупреждение о трафике</b>\n\nИспользовано: {used:.1f} / {limit} ГБ ({percent:.0f}%)\n\nВаш лимит трафика почти исчерпан.",
   "LOW_BALANCE_ALERT": "⚠️ <b>Низкий баланс</b>\n\nВаш баланс: {balance} ₽\nПорог уведомления: {threshold} ₽\n\nПополните баланс, чтобы автопродление подписки прошло успешно.",
-
   "SUBSCRIPTION_REVOKE_BTN": "🔄 Перевыпустить подписку",
   "SUBSCRIPTION_REVOKE_TITLE": "⚠️ Перевыпуск подписки",
   "SUBSCRIPTION_REVOKE_WARNING": "⚠️ <b>Перевыпуск подписки</b>\n\nЭто действие:\n• Сгенерирует новую ссылку подключения\n• Сбросит все подключённые устройства\n• Старая ссылка перестанет работать\n\nПродолжить?",
@@ -1966,7 +1965,7 @@
   "AUTOPAY_NOT_AVAILABLE_FOR_DAILY": "Автоплатеж недоступен для суточных тарифов. Списание происходит автоматически раз в сутки.",
   "AUTOPAY_NOT_AVAILABLE_TRIAL": "Автоплатеж недоступен для пробных подписок.",
   "AUTOPAY_NOT_AVAILABLE_CLASSIC": "Автоплатеж недоступен. Для продления необходимо выбрать тариф.",
-  "MAIN_MENU_TARIFF_LINE": "\n📦 Тариф: {tariff_name}",
+  "MAIN_MENU_TARIFF_LINE": "\n📦 Тариф: {tariff_name}\n\n",
   "SUB_MULTI_FALLBACK_NAME": "Подписка",
   "SUB_MULTI_SUFFIX_EXPIRED": " — истекла",
   "SUB_MULTI_SUFFIX_DISABLED": " — отключена",

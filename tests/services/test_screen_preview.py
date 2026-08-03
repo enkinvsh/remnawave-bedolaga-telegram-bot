@@ -14,9 +14,12 @@
 import pytest
 from sqlalchemy import inspect as sa_inspect
 
+from app.localization.loader import load_locale
 from app.localization.overrides import clear_override_cache, get_override_cache, set_override_cache
 from app.localization.tracing import get_recorder
 from app.services.screen_preview import (
+    DEFAULT_SYNTHETIC_STATE,
+    SYNTHETIC_STATES,
     build_synthetic_user,
     get_screen,
     list_screens,
@@ -106,6 +109,189 @@ def test_synthetic_user_has_an_active_subscription():
 
     assert user.subscription is not None
     assert user.subscription.actual_status == 'active'
+
+
+# ============ Состояния синтетического пользователя ============
+
+# Одно состояние = одна ветка _get_subscription_status. Без этого редактор
+# показывал бы только строку активной подписки, а «Истекла»/«Отключена»/
+# «Лимит трафика» правились бы вслепую.
+STATE_TO_STATUS_KEY = {
+    'active_long': 'SUB_STATUS_ACTIVE_LONG',
+    'active_few_days': 'SUB_STATUS_ACTIVE_FEW_DAYS',
+    'active_tomorrow': 'SUB_STATUS_ACTIVE_TOMORROW',
+    'active_today': 'SUB_STATUS_ACTIVE_TODAY',
+    'expired': 'SUB_STATUS_EXPIRED',
+    'disabled': 'SUB_STATUS_DISABLED',
+    'limited': 'SUB_STATUS_LIMITED',
+    'trial': 'SUB_STATUS_TRIAL_ACTIVE',
+    # Статус 'pending' — единственная ветка, где показывается SUBSCRIPTION_NONE.
+    'pending': 'SUBSCRIPTION_NONE',
+    'none': 'SUB_STATUS_NONE',
+}
+
+
+def test_state_registry_is_ordered_and_labelled():
+    assert [state.id for state in SYNTHETIC_STATES] == list(STATE_TO_STATUS_KEY)
+    assert all(state.label for state in SYNTHETIC_STATES)
+
+
+def test_default_state_is_registered():
+    assert DEFAULT_SYNTHETIC_STATE in {state.id for state in SYNTHETIC_STATES}
+
+
+@pytest.mark.parametrize('state', list(STATE_TO_STATUS_KEY))
+def test_every_state_builds_a_transient_user(state):
+    user = build_synthetic_user('ru', state=state)
+
+    assert sa_inspect(user).transient is True
+    assert sa_inspect(user).session is None
+    for subscription in user.subscriptions:
+        assert sa_inspect(subscription).transient is True
+        assert sa_inspect(subscription).session is None
+
+
+def test_none_state_has_no_subscription():
+    user = build_synthetic_user('ru', state='none')
+
+    assert user.subscriptions == []
+    assert user.subscription is None
+
+
+def test_unknown_state_is_rejected():
+    with pytest.raises(ValueError, match='no_such_state'):
+        build_synthetic_user('ru', state='no_such_state')
+
+
+@pytest.mark.parametrize(('state', 'status_key'), list(STATE_TO_STATUS_KEY.items()))
+async def test_each_state_renders_its_own_status_key(db, state, status_key):
+    payload = await render_screen('main_menu', 'ru', db, state=state)
+
+    assert 'error' not in payload
+    assert payload['state'] == state
+    assert payload['text']
+
+    rendered = [entry['key'] for entry in payload['keys'] if entry['rendered']]
+    assert status_key in rendered, rendered
+
+
+async def test_default_state_is_used_when_omitted(db):
+    payload = await render_screen('main_menu', 'ru', db)
+
+    assert payload['state'] == DEFAULT_SYNTHETIC_STATE
+
+
+async def test_unknown_state_returns_error_payload(db):
+    payload = await render_screen('main_menu', 'ru', db, state='no_such_state')
+
+    assert payload['error']
+    assert payload['keys'] == []
+    assert get_recorder() is None
+
+
+# ============ Объединение: отрисованные + объявленные ============
+
+
+async def test_declared_key_off_the_path_is_still_offered(db):
+    """Без тарифов в базе строка тарифа не рендерится, но остаётся редактируемой.
+
+    Ключ обязан быть в списке с ``rendered=False``: править его надо, просто в
+    текущем превью он не виден. (На проде тариф есть, и attach_sample_tariff
+    переводит этот ключ в rendered=True — см. тесты attach_sample_tariff.)
+
+    Эталон берём из файла локали, а не литералом: строка меняется при правках
+    вёрстки экрана, и прибитый литерал ронял бы тест на каждой такой правке.
+    """
+    payload = await render_screen('main_menu', 'ru', db, state='active_long')
+    entry = next(item for item in payload['keys'] if item['key'] == 'MAIN_MENU_TARIFF_LINE')
+
+    assert entry['rendered'] is False
+    assert entry['default_value'] == load_locale('ru')['MAIN_MENU_TARIFF_LINE']
+    # Отступ вокруг строки тарифа живёт в самом ключе — раньше \n\n были зашиты
+    # в menu.py, и удалить пустую строку после тарифа было нельзя.
+    assert entry['default_value'].startswith('\n')
+    assert entry['default_value'].endswith('\n\n')
+
+
+async def test_rendered_flag_marks_traced_keys(db):
+    payload = await render_screen('main_menu', 'ru', db, state='expired')
+    entry = next(item for item in payload['keys'] if item['key'] == 'SUB_STATUS_EXPIRED')
+
+    assert entry['rendered'] is True
+
+
+async def test_traced_keys_come_first_in_trace_order(db):
+    payload = await render_screen('main_menu', 'ru', db, state='active_long')
+    flags = [entry['rendered'] for entry in payload['keys']]
+
+    assert flags == sorted(flags, reverse=True), 'отрисованные ключи должны идти до объявленных'
+
+    rendered = [entry['key'] for entry in payload['keys'] if entry['rendered']]
+    assert rendered[0] == 'MAIN_MENU'
+    assert rendered[1] == 'SUB_STATUS_ACTIVE_LONG'
+
+
+async def test_declared_only_keys_follow_declaration_order(db):
+    screen = get_screen('main_menu')
+    payload = await render_screen('main_menu', 'ru', db, state='active_long')
+
+    rendered = {entry['key'] for entry in payload['keys'] if entry['rendered']}
+    declared_only = [entry['key'] for entry in payload['keys'] if not entry['rendered']]
+
+    assert declared_only == [key for key in screen.keys if key not in rendered]
+
+
+async def test_union_covers_every_declared_key(db):
+    screen = get_screen('main_menu')
+    payload = await render_screen('main_menu', 'ru', db)
+
+    assert set(screen.keys) <= {entry['key'] for entry in payload['keys']}
+
+
+async def test_union_has_no_duplicates(db):
+    payload = await render_screen('main_menu', 'ru', db)
+    keys = [entry['key'] for entry in payload['keys']]
+
+    assert len(keys) == len(set(keys))
+
+
+async def test_every_traced_key_across_all_states_is_declared(db):
+    """Защита от дрейфа: добавил строку на экран — объяви её в ``keys``."""
+    screen = get_screen('main_menu')
+
+    traced: set[str] = set()
+    for state in STATE_TO_STATUS_KEY:
+        payload = await render_screen('main_menu', 'ru', db, state=state)
+        traced.update(entry['key'] for entry in payload['keys'] if entry['rendered'])
+
+    undeclared = sorted(traced - set(screen.keys))
+    assert not undeclared, f'ключи отрисовываются, но не объявлены в ScreenDefinition.keys: {undeclared}'
+
+
+async def test_declared_keys_all_exist_in_the_bundled_locale(db):
+    """Объявленный ключ без строки в ru.json — опечатка, а не фича."""
+    from app.localization.loader import load_locale
+
+    bundled = load_locale('ru')
+    screen = get_screen('main_menu')
+
+    missing = [key for key in screen.keys if key not in bundled]
+    assert not missing, missing
+
+
+async def test_draft_applies_to_a_declared_only_key(db):
+    """Правка ключа вне текущего пути не должна ломать превью."""
+    payload = await render_screen(
+        'main_menu',
+        'ru',
+        db,
+        state='active_long',
+        draft={'MAIN_MENU_TARIFF_LINE': '\n📦 ЧЕРНОВИК: {tariff_name}'},
+    )
+    entry = next(item for item in payload['keys'] if item['key'] == 'MAIN_MENU_TARIFF_LINE')
+
+    assert entry['value'] == '\n📦 ЧЕРНОВИК: {tariff_name}'
+    assert entry['rendered'] is False
 
 
 # ============ Рендер ============
@@ -254,7 +440,7 @@ async def test_unknown_language_returns_error_payload(db):
 async def test_broken_screen_is_reported_not_raised(db, monkeypatch):
     from app.services.screen_preview import registry
 
-    async def _boom(texts, session):
+    async def _boom(texts, session, state):
         raise RuntimeError('рендер сломался')
 
     broken = registry.ScreenDefinition(
@@ -270,3 +456,70 @@ async def test_broken_screen_is_reported_not_raised(db, monkeypatch):
     assert 'рендер сломался' in payload['error']
     assert payload['text'] == ''
     assert get_recorder() is None
+
+
+# ============ attach_sample_tariff ============
+# Без реального tariff_id строка тарифа не рендерится: превью расходилось с
+# ботом, и MAIN_MENU_TARIFF_LINE нельзя было отредактировать осмысленно —
+# владелец не видел результат правки.
+
+
+class _FakeTariff:
+    def __init__(self, tariff_id: int) -> None:
+        self.id = tariff_id
+
+
+@pytest.mark.asyncio
+async def test_attach_sample_tariff_borrows_a_real_tariff_id(monkeypatch):
+    from app.services.screen_preview import synthetic
+
+    async def _tariffs(_db):
+        return [_FakeTariff(42), _FakeTariff(43)]
+
+    monkeypatch.setattr('app.database.crud.tariff.get_all_active_tariffs', _tariffs)
+
+    user = synthetic.build_synthetic_user('ru', state='active_long')
+    assert user.subscriptions[0].tariff_id is None
+
+    attached = await synthetic.attach_sample_tariff(object(), user)
+
+    assert attached is True
+    assert user.subscriptions[0].tariff_id == 42
+
+
+@pytest.mark.asyncio
+async def test_attach_sample_tariff_is_a_noop_without_tariffs(monkeypatch):
+    from app.services.screen_preview import synthetic
+
+    async def _none(_db):
+        return []
+
+    monkeypatch.setattr('app.database.crud.tariff.get_all_active_tariffs', _none)
+
+    user = synthetic.build_synthetic_user('ru', state='active_long')
+    assert await synthetic.attach_sample_tariff(object(), user) is False
+    assert user.subscriptions[0].tariff_id is None
+
+
+@pytest.mark.asyncio
+async def test_attach_sample_tariff_survives_a_broken_query(monkeypatch):
+    from app.services.screen_preview import synthetic
+
+    async def _boom(_db):
+        raise RuntimeError('база недоступна')
+
+    monkeypatch.setattr('app.database.crud.tariff.get_all_active_tariffs', _boom)
+
+    user = synthetic.build_synthetic_user('ru', state='active_long')
+    # Превью не должно падать из-за тарифов.
+    assert await synthetic.attach_sample_tariff(object(), user) is False
+
+
+@pytest.mark.asyncio
+async def test_attach_sample_tariff_handles_state_without_subscription():
+    from app.services.screen_preview import synthetic
+
+    user = synthetic.build_synthetic_user('ru', state='none')
+    assert user.subscriptions == []
+    assert await synthetic.attach_sample_tariff(object(), user) is False
+    assert await synthetic.attach_sample_tariff(None, user) is False

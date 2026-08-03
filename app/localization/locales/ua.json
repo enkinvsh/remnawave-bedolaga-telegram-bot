@@ -1667,7 +1667,6 @@
   "WEBHOOK_CLOSE_BUTTON": "✖️ Закрити",
   "TRAFFIC_WARNING_ALERT": "⚠️ <b>Попередження про трафік</b>\n\nВикористано: {used:.1f} / {limit} ГБ ({percent:.0f}%)\n\nВаш ліміт трафіку майже вичерпаний.",
   "LOW_BALANCE_ALERT": "⚠️ <b>Низький баланс</b>\n\nВаш баланс: {balance} ₽\nПоріг сповіщення: {threshold} ₽\n\nПоповніть баланс, щоб автопродовження підписки пройшло успішно.",
-
   "SUBSCRIPTION_REVOKE_BTN": "🔄 Перевипустити підписку",
   "SUBSCRIPTION_REVOKE_TITLE": "⚠️ Перевипуск підписки",
   "SUBSCRIPTION_REVOKE_WARNING": "⚠️ <b>Перевипуск підписки</b>\n\nЦя дія:\n• Згенерує нове посилання підключення\n• Скине всі підключені пристрої\n• Старе посилання перестане працювати\n\nПродовжити?",
@@ -1966,7 +1965,7 @@
   "CONTEST_UNKNOWN": "Тип конкурсу не підтримується.",
   "PERIOD": "Період",
   "ADMIN_CONTESTS_LIST": "📋 Поточні конкурси",
-  "MAIN_MENU_TARIFF_LINE": "\n📦 Тариф: {tariff_name}",
+  "MAIN_MENU_TARIFF_LINE": "\n📦 Тариф: {tariff_name}\n\n",
   "SUB_MULTI_FALLBACK_NAME": "Підписка",
   "SUB_MULTI_SUFFIX_EXPIRED": " — закінчилася",
   "SUB_MULTI_SUFFIX_DISABLED": " — вимкнена",
