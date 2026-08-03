@@ -329,8 +329,15 @@ def test_load_aliases_real_asset():
     aliases = load_aliases()
 
     assert aliases['🔍'] == '🔎'
-    assert len(aliases) == 23
+    assert aliases
     assert all(isinstance(key, str) and isinstance(value, str) for key, value in aliases.items())
+    # Ключи и значения нормализованы: матчинг идёт по карте со срезанным VS16.
+    assert all('\ufe0f' not in key and '\ufe0f' not in value for key, value in aliases.items())
+    # Алиас на самого себя бессмысленен.
+    assert all(key != value for key, value in aliases.items())
+    # Цепочки запрещены: цель ищется в ПАКЕ, а не среди алиасов,
+    # поэтому alias -> alias никогда бы не разрезолвился.
+    assert not (set(aliases.values()) & set(aliases)), 'алиас указывает на другой алиас'
 
 
 def test_load_usage_real_asset():
