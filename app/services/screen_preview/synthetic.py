@@ -146,7 +146,13 @@ async def attach_sample_tariff(db: Any, user: User) -> bool:
     if not tariffs:
         return False
 
-    user.subscriptions[0].tariff_id = tariffs[0].id
+    subscription = user.subscriptions[0]
+    subscription.tariff_id = tariffs[0].id
+    # Связь заполняем вместе с id: код подписки, увидев tariff_id без
+    # загруженного tariff, пишет в лог ERROR и откатывается в classic-режим —
+    # на каждое превью подписки капал бы ложный «tariff relationship not
+    # loaded», да ещё и рендер шёл бы не по той ветке.
+    subscription.tariff = tariffs[0]
     return True
 
 

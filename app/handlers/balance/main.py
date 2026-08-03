@@ -222,18 +222,41 @@ async def route_payment_by_method(
     return False
 
 
-@error_handler
-async def show_balance_menu(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    # Проверяем, доступно ли сообщение
-    if isinstance(callback.message, InaccessibleMessage):
-        await callback.answer()
-        return
+def get_balance_text(user: User, texts) -> str:
+    """Текст экрана «Баланс».
 
+    Живёт отдельно от хендлера, потому что хендлеру нужен ``CallbackQuery``, а
+    превью экрана в кабинете рендерится headless. Оба обязаны звать эту
+    функцию — копия форматирования разъедется с ботом.
+    """
+    return texts.BALANCE_INFO.format(balance=texts.format_price(user.balance_kopeks))
+
+
+async def _user_has_saved_cart(user_id: int) -> bool:
+    """Есть ли у пользователя сохранённая корзина.
+
+    Падение Redis не должно ронять экран «Баланс»: без ответа просто не рисуем
+    кнопки возврата/отмены.
+    """
+    try:
+        from app.services.user_cart_service import user_cart_service
+
+        return await user_cart_service.has_user_cart(user_id)
+    except Exception as error:
+        logger.warning('Не удалось проверить сохранённую корзину для экрана баланса', error=error)
+        return False
+
+
+async def _render_balance_screen(callback: types.CallbackQuery, db_user: User) -> None:
+    """Отрисовать экран «Баланс» без ответа на callback.
+
+    Вынесено из ``show_balance_menu``, потому что отмена корзины должна сначала
+    ответить своим текстом, а потом перерисовать экран — двойной ``answer``
+    Telegram не принимает.
+    """
     texts = get_texts(db_user.language)
-
-    balance_text = texts.BALANCE_INFO.format(balance=texts.format_price(db_user.balance_kopeks))
-
-    reply_markup = get_balance_keyboard(db_user.language)
+    balance_text = get_balance_text(db_user, texts)
+    reply_markup = get_balance_keyboard(db_user.language, has_saved_cart=await _user_has_saved_cart(db_user.id))
 
     try:
         if callback.message and callback.message.text:
@@ -245,7 +268,41 @@ async def show_balance_menu(callback: types.CallbackQuery, db_user: User, db: As
     except TelegramBadRequest as error:
         logger.warning('Failed to edit balance message, sending a new one instead', error=error)
         await callback.message.answer(balance_text, reply_markup=reply_markup)
+
+
+@error_handler
+async def show_balance_menu(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    # Проверяем, доступно ли сообщение
+    if isinstance(callback.message, InaccessibleMessage):
+        await callback.answer()
+        return
+
+    await _render_balance_screen(callback, db_user)
     await callback.answer()
+
+
+@error_handler
+async def handle_cart_dismiss(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Отменить сохранённую корзину прямо с экрана «Баланс».
+
+    Удаление отсутствующей корзины — безобидный no-op: сервис возвращает False
+    и ничего не бросает, экран просто перерисовывается уже без кнопок.
+    """
+    if isinstance(callback.message, InaccessibleMessage):
+        await callback.answer()
+        return
+
+    texts = get_texts(db_user.language)
+
+    try:
+        from app.services.user_cart_service import user_cart_service
+
+        await user_cart_service.delete_user_cart(db_user.id)
+    except Exception as error:
+        logger.warning('Не удалось удалить сохранённую корзину', user_id=db_user.id, error=error)
+
+    await callback.answer(texts.t('CART_DISMISSED_ALERT', 'Оформление отменено'))
+    await _render_balance_screen(callback, db_user)
 
 
 @error_handler
@@ -680,6 +737,8 @@ async def handle_topup_amount_callback(
 
 def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(show_balance_menu, F.data == 'menu_balance')
+
+    dp.callback_query.register(handle_cart_dismiss, F.data == 'cart_dismiss')
 
     dp.callback_query.register(show_balance_history, F.data == 'balance_history')
 

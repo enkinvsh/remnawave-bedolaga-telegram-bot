@@ -35,7 +35,7 @@ async def get_main_menu_keyboard_async(
     balance_kopeks: int = 0,
     subscription=None,
     show_resume_checkout: bool = False,
-    has_saved_cart: bool = False,
+    has_saved_cart: bool | None = None,
     *,
     is_moderator: bool = False,
     custom_buttons: list[InlineKeyboardButton] | None = None,
@@ -46,7 +46,16 @@ async def get_main_menu_keyboard_async(
 
     Если MENU_LAYOUT_ENABLED=True, использует конфигурацию из БД.
     Иначе делегирует в синхронную версию.
+
+    ``has_saved_cart`` больше не рисует кнопку «Вернуться к оформлению» в
+    главном меню — она переехала на экран «Баланс». Параметр остаётся в
+    сигнатуре: его передают существующие вызывающие и конструктор меню.
+    Redis здесь не опрашивается: платить запросом за каждый рендер меню
+    незачем, кнопки в нём всё равно нет.
     """
+    if has_saved_cart is None:
+        has_saved_cart = False
+
     if settings.MENU_LAYOUT_ENABLED:
         from app.services.menu_layout_service import MenuContext, MenuLayoutService
 
@@ -738,14 +747,11 @@ def get_main_menu_keyboard(
     if simple_purchase_button:
         paired_buttons.append(simple_purchase_button)
 
-    if show_resume_checkout or has_saved_cart:
-        resume_callback = 'return_to_saved_cart' if has_saved_cart else 'subscription_resume_checkout'
-        paired_buttons.append(
-            InlineKeyboardButton(
-                text=texts.RETURN_TO_SUBSCRIPTION_CHECKOUT,
-                callback_data=resume_callback,
-            )
-        )
+    # Кнопки «Вернуться к оформлению подписки» здесь больше нет. Корзину пишет
+    # только неудачная покупка из-за нехватки средств, и в главном меню кнопка
+    # висела до истечения TTL без всякой возможности её убрать. Теперь она живёт
+    # на экране «Баланс» (get_balance_keyboard) вместе с кнопкой отмены —
+    # пополнение и есть то, зачем пользователь с сохранённой корзиной туда идёт.
 
     if custom_buttons:
         for button in custom_buttons:
@@ -1570,15 +1576,34 @@ def get_subscription_confirm_keyboard(language: str = DEFAULT_LANGUAGE) -> Inlin
     )
 
 
-def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+def get_balance_keyboard(language: str = DEFAULT_LANGUAGE, has_saved_cart: bool = False) -> InlineKeyboardMarkup:
     texts = get_texts(language)
 
-    keyboard = [
+    keyboard: list[list[InlineKeyboardButton]] = []
+
+    # Сохранённая корзина ждёт денег, а пользователь уже на экране пополнения —
+    # поэтому предложение вернуться к оформлению стоит первым рядом. Рядом —
+    # «отменить», чтобы корзину можно было убрать, не дожидаясь истечения TTL.
+    if has_saved_cart:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.RETURN_TO_SUBSCRIPTION_CHECKOUT,
+                    callback_data='return_to_saved_cart',
+                ),
+                InlineKeyboardButton(
+                    text=texts.t('CART_DISMISS_BUTTON', '✕ Отменить'),
+                    callback_data='cart_dismiss',
+                ),
+            ]
+        )
+
+    keyboard.append(
         [
             InlineKeyboardButton(text=texts.BALANCE_HISTORY, callback_data='balance_history'),
             InlineKeyboardButton(text=texts.BALANCE_TOP_UP, callback_data='balance_topup'),
-        ],
-    ]
+        ]
+    )
     if settings.YOOKASSA_RECURRENT_ENABLED:
         keyboard.append(
             [

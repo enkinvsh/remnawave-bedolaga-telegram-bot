@@ -145,3 +145,127 @@ register_screen(
         keys=MAIN_MENU_KEYS,
     )
 )
+
+
+BALANCE_KEYS: tuple[str, ...] = ('BALANCE_INFO',)
+
+# Баланс не зависит от подписки: предлагать все девять состояний значило бы
+# показывать владельцу выбор, который ничего не меняет. Id остаётся валидным
+# ключом сборщика пользователя, а подпись говорит правду про этот экран.
+BALANCE_STATES: tuple[SyntheticState, ...] = (SyntheticState(DEFAULT_SYNTHETIC_STATE, 'Демо-пользователь'),)
+
+
+async def _render_balance(texts: Texts, db: Any, state: str) -> str:
+    """Экран «Баланс» — той же функцией, которой его собирает хендлер."""
+    from app.handlers.balance.main import get_balance_text
+
+    from .synthetic import build_synthetic_user
+
+    return get_balance_text(build_synthetic_user(texts.language, state=state), texts)
+
+
+register_screen(
+    ScreenDefinition(
+        id='balance',
+        title='Баланс',
+        description='Экран пополнения: текущий баланс пользователя и приглашение выбрать действие.',
+        render=_render_balance,
+        keys=BALANCE_KEYS,
+        states=BALANCE_STATES,
+    )
+)
+
+
+# Экран кнопки «Подписка» собирается build_subscription_overview_text из
+# purchase.py. Раньше сюда был подключён get_subscription_info_text из
+# pricing.py с шаблоном SUBSCRIPTION_INFO — владелец правил ключ, который
+# реальный экран не читает, и правка «не срабатывала».
+SUBSCRIPTION_KEYS: tuple[str, ...] = (
+    'SUBSCRIPTION_OVERVIEW_TEMPLATE',
+    # Шаблон для суточных тарифов: нужен тариф с is_daily из БД.
+    'SUBSCRIPTION_DAILY_OVERVIEW_TEMPLATE',
+    # Экран без подписки вообще.
+    'SUBSCRIPTION_NONE',
+    # Статус подписки.
+    'SUBSCRIPTION_STATUS_ACTIVE',
+    'SUBSCRIPTION_STATUS_TRIAL',
+    'SUBSCRIPTION_STATUS_EXPIRED',
+    'SUBSCRIPTION_STATUS_LIMITED',
+    'SUBSCRIPTION_STATUS_DISABLED',
+    'SUBSCRIPTION_STATUS_UNKNOWN',
+    # Остаток срока и предупреждения.
+    'SUBSCRIPTION_TIME_LEFT_DAYS',
+    'SUBSCRIPTION_TIME_LEFT_HOURS',
+    'SUBSCRIPTION_TIME_LEFT_MINUTES',
+    'SUBSCRIPTION_TIME_LEFT_EXPIRED',
+    'SUBSCRIPTION_WARNING_TOMORROW',
+    'SUBSCRIPTION_WARNING_TODAY',
+    'SUBSCRIPTION_WARNING_MINUTES',
+    # Тип и трафик.
+    'SUBSCRIPTION_TYPE_TRIAL',
+    'SUBSCRIPTION_TYPE_PAID',
+    'SUBSCRIPTION_TRAFFIC_LIMITED',
+    'SUBSCRIPTION_TRAFFIC_UNLIMITED',
+    'SUBSCRIPTION_NO_SERVERS',
+    # Блок тарифа: рендерится только в режиме тарифов и только при tariff_id.
+    'SUBSCRIPTION_TARIFF_NAME_LINE',
+    'SUBSCRIPTION_TARIFF_TYPE_LINE',
+    'SUBSCRIPTION_TARIFF_TYPE_DAILY',
+    'SUBSCRIPTION_TARIFF_TYPE_PERIODIC',
+    'SUBSCRIPTION_TARIFF_TRAFFIC_LINE',
+    'SUBSCRIPTION_TARIFF_TRAFFIC_UNLIMITED_LINE',
+    'SUBSCRIPTION_TARIFF_DEVICES_LINE',
+    'SUBSCRIPTION_TARIFF_DAILY_PRICE_LINE',
+    'SUBSCRIPTION_TARIFF_DAILY_PAUSED',
+    'SUBSCRIPTION_TARIFF_DAILY_TIME_LEFT',
+    'SUBSCRIPTION_TARIFF_DAILY_CHARGE_PAUSED',
+    'SUBSCRIPTION_TARIFF_DAILY_NEXT_CHARGE',
+    'SUBSCRIPTION_TARIFF_DAILY_PROGRESS',
+    'SUBSCRIPTION_TARIFF_DAILY_FIRST_CHARGE',
+    # Список устройств приходит из панели по uuid, которого у демо-юзера нет.
+    'SUBSCRIPTION_CONNECTED_DEVICES_TITLE',
+    'SUBSCRIPTION_CONNECTED_DEVICES_FOOTER',
+    'SUBSCRIPTION_DEVICE_LINE',
+    'SUBSCRIPTION_DEVICE_ITEM',
+    'SUBSCRIPTION_DEVICE_UNKNOWN',
+    # Докупленный трафик: TrafficPurchase читается из БД по id подписки.
+    'SUBSCRIPTION_PURCHASED_TRAFFIC_TITLE',
+    'SUBSCRIPTION_PURCHASED_TRAFFIC_FOOTER',
+    'SUBSCRIPTION_PURCHASED_TRAFFIC_ITEM',
+    'SUBSCRIPTION_PURCHASED_TRAFFIC_PROGRESS',
+    'SUBSCRIPTION_PURCHASED_EXPIRES_TODAY',
+    'SUBSCRIPTION_PURCHASED_ONE_DAY_LEFT',
+    'SUBSCRIPTION_PURCHASED_FEW_DAYS_LEFT',
+    'SUBSCRIPTION_PURCHASED_MANY_DAYS_LEFT',
+    # Ссылка подключения приходит из панели.
+    'SUBSCRIPTION_CONNECT_LINK_SECTION',
+    'SUBSCRIPTION_CONNECT_LINK_PROMPT',
+)
+
+# Экран показывает КОНКРЕТНУЮ подписку, поэтому состояния без неё ('none') не
+# предлагаем. В отличие от главного меню, здесь disabled и limited дают СВОИ
+# строки статуса, так что оба состояния осмысленны.
+SUBSCRIPTION_STATES: tuple[SyntheticState, ...] = tuple(state for state in SYNTHETIC_STATES if state.id != 'none')
+
+
+async def _render_subscription(texts: Texts, db: Any, state: str) -> str:
+    """Экран «Подписка» — тем же билдером, что зовёт хендлер menu_subscription."""
+    from app.handlers.subscription.purchase import build_subscription_overview_text
+
+    from .synthetic import attach_sample_tariff, build_synthetic_user
+
+    user = build_synthetic_user(texts.language, state=state)
+    await attach_sample_tariff(db, user)
+    return await build_subscription_overview_text(user, texts, db)
+
+
+register_screen(
+    ScreenDefinition(
+        id='subscription',
+        title='Подписка',
+        description='Экран кнопки «Подписка»: баланс, статус, срок, трафик, серверы, устройства и ссылка подключения.',
+        render=_render_subscription,
+        keys=SUBSCRIPTION_KEYS,
+        states=SUBSCRIPTION_STATES,
+    )
+)

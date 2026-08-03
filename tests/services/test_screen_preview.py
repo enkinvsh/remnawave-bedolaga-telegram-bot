@@ -53,6 +53,36 @@ class _StubSession:
         self.added.append(obj)
 
 
+class _EmptySession:
+    """Сессия, отвечающая пустым результатом — как реальная БД без строк.
+
+    Экран подписки читает докупленный трафик прямым запросом без try/except,
+    поэтому ему нужна отвечающая сессия, а не падающая.
+    """
+
+    def __init__(self):
+        self.added: list[object] = []
+
+    async def execute(self, *args, **kwargs):
+        class _Result:
+            def scalars(self):
+                return self
+
+            def all(self):
+                return []
+
+            def scalar_one_or_none(self):
+                return None
+
+        return _Result()
+
+    async def scalar(self, *args, **kwargs):
+        return None
+
+    def add(self, obj):  # pragma: no cover - вызов = провал теста
+        self.added.append(obj)
+
+
 @pytest.fixture(autouse=True)
 def _clean_override_cache():
     clear_override_cache()
@@ -255,28 +285,219 @@ async def test_union_has_no_duplicates(db):
     assert len(keys) == len(set(keys))
 
 
-async def test_every_traced_key_across_all_states_is_declared(db):
-    """Защита от дрейфа: добавил строку на экран — объяви её в ``keys``."""
-    screen = get_screen('main_menu')
+@pytest.mark.parametrize('screen_id', [screen.id for screen in list_screens()])
+async def test_every_traced_key_across_all_states_is_declared(screen_id):
+    """Защита от дрейфа: добавил строку на экран — объяви её в ``keys``.
+
+    Гоняем КАЖДЫЙ зарегистрированный экран по КАЖДОМУ его состоянию.
+    """
+    screen = get_screen(screen_id)
 
     traced: set[str] = set()
-    for state in STATE_TO_STATUS_KEY:
-        payload = await render_screen('main_menu', 'ru', db, state=state)
+    for state in screen.states:
+        payload = await render_screen(screen_id, 'ru', _EmptySession(), state=state.id)
+        assert 'error' not in payload, payload.get('error')
         traced.update(entry['key'] for entry in payload['keys'] if entry['rendered'])
 
     undeclared = sorted(traced - set(screen.keys))
-    assert not undeclared, f'ключи отрисовываются, но не объявлены в ScreenDefinition.keys: {undeclared}'
+    assert not undeclared, f'{screen_id}: ключи отрисовываются, но не объявлены в keys: {undeclared}'
 
 
-async def test_declared_keys_all_exist_in_the_bundled_locale(db):
+@pytest.mark.parametrize('screen_id', [screen.id for screen in list_screens()])
+def test_declared_keys_all_exist_in_the_bundled_locale(screen_id):
     """Объявленный ключ без строки в ru.json — опечатка, а не фича."""
     from app.localization.loader import load_locale
 
     bundled = load_locale('ru')
-    screen = get_screen('main_menu')
+    screen = get_screen(screen_id)
 
     missing = [key for key in screen.keys if key not in bundled]
     assert not missing, missing
+
+
+def test_every_screen_declares_keys_states_and_default():
+    for screen in list_screens():
+        assert screen.keys, f'{screen.id}: не объявлены keys'
+        assert screen.states, f'{screen.id}: не объявлены states'
+        assert screen.default_state in {state.id for state in screen.states}, screen.id
+        assert screen.title and screen.description, screen.id
+
+
+# ============ Экран «Баланс» ============
+
+
+async def test_balance_screen_is_registered():
+    assert get_screen('balance') is not None
+
+
+async def test_balance_screen_renders_and_traces_its_key():
+    payload = await render_screen('balance', 'ru', _EmptySession())
+
+    assert 'error' not in payload
+    assert payload['text']
+
+    rendered = [entry['key'] for entry in payload['keys'] if entry['rendered']]
+    assert rendered == ['BALANCE_INFO']
+
+
+async def test_balance_screen_matches_the_handler_helper():
+    """Превью и хендлер обязаны собирать текст одной и той же функцией."""
+    from app.handlers.balance.main import get_balance_text
+    from app.localization.texts import get_texts
+    from app.services.screen_preview.synthetic import build_synthetic_user
+
+    payload = await render_screen('balance', 'ru', _EmptySession())
+    expected = get_balance_text(build_synthetic_user('ru'), get_texts('ru'))
+
+    assert payload['text'] == expected
+
+
+async def test_balance_screen_offers_only_meaningful_states():
+    """Баланс не зависит от подписки — предлагать 9 состояний бессмысленно."""
+    screen = get_screen('balance')
+
+    assert len(screen.states) == 1
+    assert screen.default_state == screen.states[0].id
+
+
+async def test_balance_screen_draft_applies():
+    payload = await render_screen('balance', 'ru', _EmptySession(), draft={'BALANCE_INFO': 'Счёт: {balance}'})
+
+    assert payload['text'].startswith('Счёт: ')
+
+
+# ============ Экран «Подписка» ============
+
+
+async def test_subscription_screen_is_registered():
+    assert get_screen('subscription') is not None
+
+
+async def test_subscription_screen_renders_the_template_the_user_actually_sees():
+    """Экран кнопки «Подписка» собирается из SUBSCRIPTION_OVERVIEW_TEMPLATE.
+
+    Раньше сюда был подключён get_subscription_info_text с шаблоном
+    SUBSCRIPTION_INFO — владелец правил ключ, который реальный экран не читает,
+    и правка «не срабатывала».
+    """
+    payload = await render_screen('subscription', 'ru', _EmptySession())
+
+    assert 'error' not in payload
+    assert payload['text']
+
+    rendered = [entry['key'] for entry in payload['keys'] if entry['rendered']]
+    assert 'SUBSCRIPTION_OVERVIEW_TEMPLATE' in rendered
+    assert 'SUBSCRIPTION_INFO' not in rendered, rendered
+
+
+async def test_subscription_screen_matches_the_handler_builder():
+    from app.handlers.subscription.purchase import build_subscription_overview_text
+    from app.localization.texts import get_texts
+    from app.services.screen_preview.synthetic import build_synthetic_user
+
+    session = _EmptySession()
+    payload = await render_screen('subscription', 'ru', session, state='active_long')
+    expected = await build_subscription_overview_text(
+        build_synthetic_user('ru', state='active_long'), get_texts('ru'), session
+    )
+
+    assert payload['text'] == expected
+
+
+async def test_editing_the_overview_template_changes_the_preview():
+    """Ровно то, что не сработало у владельца: правка шапки экрана."""
+    payload = await render_screen(
+        'subscription',
+        'ru',
+        _EmptySession(),
+        draft={'SUBSCRIPTION_OVERVIEW_TEMPLATE': '👤 {full_name}\nШАПКА ПЕРЕПИСАНА'},
+    )
+
+    assert 'ШАПКА ПЕРЕПИСАНА' in payload['text']
+    assert 'Информация о подписке' not in payload['text']
+
+
+@pytest.mark.parametrize(
+    ('state', 'status_key'),
+    [
+        ('active_long', 'SUBSCRIPTION_STATUS_ACTIVE'),
+        ('expired', 'SUBSCRIPTION_STATUS_EXPIRED'),
+        ('limited', 'SUBSCRIPTION_STATUS_LIMITED'),
+        ('disabled', 'SUBSCRIPTION_STATUS_DISABLED'),
+    ],
+)
+async def test_subscription_screen_states_change_the_status_string(state, status_key):
+    payload = await render_screen('subscription', 'ru', _EmptySession(), state=state)
+
+    rendered = [entry['key'] for entry in payload['keys'] if entry['rendered']]
+    assert status_key in rendered, rendered
+
+
+async def test_status_trial_row_falls_through_to_unknown():
+    """Фиксируем ПОВЕДЕНИЕ БОТА, а не желаемое: подписка со status='trial'.
+
+    Ветка статуса на этом экране распознаёт триал только как
+    ``status == 'active' and is_trial``; строка со ``status == 'trial'``
+    проваливается в SUBSCRIPTION_STATUS_UNKNOWN. Это предсуществующее поведение
+    хендлера — здесь оно не чинится, чтобы не менять то, что видит юзер.
+    Тип подписки при этом определяется по ``is_trial`` и остаётся «Триал».
+    """
+    payload = await render_screen('subscription', 'ru', _EmptySession(), state='trial')
+
+    rendered = [entry['key'] for entry in payload['keys'] if entry['rendered']]
+    assert 'SUBSCRIPTION_STATUS_UNKNOWN' in rendered
+    assert 'SUBSCRIPTION_TYPE_TRIAL' in rendered
+
+
+async def test_subscription_screen_skips_the_stateless_none():
+    """Без подписки экран показывать нечего — состояние 'none' не предлагается."""
+    screen = get_screen('subscription')
+
+    assert 'none' not in {state.id for state in screen.states}
+
+
+async def test_subscription_screen_draft_applies():
+    payload = await render_screen(
+        'subscription',
+        'ru',
+        _EmptySession(),
+        state='active_long',
+        draft={'SUBSCRIPTION_STATUS_ACTIVE': 'ЧЕРНОВИК'},
+    )
+
+    assert 'ЧЕРНОВИК' in payload['text']
+
+
+async def test_subscription_screen_never_writes_the_synthetic_user():
+    session = _EmptySession()
+
+    await render_screen('subscription', 'ru', session)
+
+    assert session.added == []
+
+
+# ============ Синтетический тариф ============
+
+
+async def test_attach_sample_tariff_keeps_the_user_transient():
+    from app.services.screen_preview.synthetic import attach_sample_tariff
+
+    session = _EmptySession()
+    user = build_synthetic_user('ru')
+
+    await attach_sample_tariff(session, user)
+
+    assert sa_inspect(user).transient is True
+    assert session.added == []
+
+
+async def test_attach_sample_tariff_without_subscription_is_a_noop():
+    from app.services.screen_preview.synthetic import attach_sample_tariff
+
+    user = build_synthetic_user('ru', state='none')
+
+    assert await attach_sample_tariff(_EmptySession(), user) is False
+    assert user.subscriptions == []
 
 
 async def test_draft_applies_to_a_declared_only_key(db):
@@ -464,9 +685,16 @@ async def test_broken_screen_is_reported_not_raised(db, monkeypatch):
 # владелец не видел результат правки.
 
 
-class _FakeTariff:
-    def __init__(self, tariff_id: int) -> None:
-        self.id = tariff_id
+def _FakeTariff(tariff_id: int):
+    """Настоящая ORM-модель, а не заглушка.
+
+    attach_sample_tariff заполняет не только tariff_id, но и связь
+    ``subscription.tariff`` — SQLAlchemy примет туда только инстанс модели.
+    Объект transient, в сессию не добавляется.
+    """
+    from app.database.models import Tariff
+
+    return Tariff(id=tariff_id, name=f'Демо-тариф {tariff_id}', is_active=True)
 
 
 @pytest.mark.asyncio
@@ -485,6 +713,10 @@ async def test_attach_sample_tariff_borrows_a_real_tariff_id(monkeypatch):
 
     assert attached is True
     assert user.subscriptions[0].tariff_id == 42
+    # Связь обязана заполняться вместе с id: иначе код подписки логирует
+    # ERROR «tariff relationship not loaded» и уходит в classic-режим.
+    assert user.subscriptions[0].tariff is not None
+    assert user.subscriptions[0].tariff.id == 42
 
 
 @pytest.mark.asyncio

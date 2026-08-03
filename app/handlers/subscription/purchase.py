@@ -225,6 +225,40 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
     await db.refresh(subscription)
     await db.refresh(db_user)
 
+    message = await build_subscription_overview_text(db_user, texts, db, subscription=subscription)
+
+    await callback.message.edit_text(
+        message,
+        reply_markup=get_subscription_keyboard(
+            db_user.language, has_subscription=True, is_trial=subscription.is_trial, subscription=subscription
+        ),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+async def build_subscription_overview_text(user: User, texts, db: AsyncSession, subscription=None) -> str:
+    """Собирает текст экрана «Подписка» (кнопка menu_subscription).
+
+    Вынесено из ``show_subscription_info``, который принимает ``CallbackQuery``
+    и потому не вызывается headless. Превью экрана в кабинете зовёт ЭТУ же
+    функцию — копия форматирования разъехалась бы с ботом.
+
+    Синхронизация с панелью, ``db.refresh`` и выбор клавиатуры остаются в
+    хендлере: превью ничего не мутирует. Мульти-тарифный режим сюда не доходит,
+    хендлер уводит его в ``show_my_subscriptions``.
+
+    ``subscription`` передаётся хендлером явно, потому что там объект уже
+    переприсвоен ``check_and_update_subscription_status``; без него берётся
+    ``user.subscription``.
+    """
+    if subscription is None:
+        subscription = user.subscription
+
+    if not subscription:
+        return texts.SUBSCRIPTION_NONE
+
+    db_user = user
     current_time = datetime.now(UTC)
 
     if subscription.status == 'limited':
@@ -357,13 +391,28 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
                 # Формируем блок информации о тарифе
                 is_daily = getattr(tariff, 'is_daily', False)
-                tariff_type_str = '🔄 Суточный' if is_daily else '📅 Периодный'
+                tariff_type_str = (
+                    texts.t('SUBSCRIPTION_TARIFF_TYPE_DAILY', '🔄 Суточный')
+                    if is_daily
+                    else texts.t('SUBSCRIPTION_TARIFF_TYPE_PERIODIC', '📅 Периодный')
+                )
+
+                if tariff.traffic_limit_gb > 0:
+                    tariff_traffic_line = texts.t('SUBSCRIPTION_TARIFF_TRAFFIC_LINE', 'Трафик: {traffic_gb} ГБ').format(
+                        traffic_gb=tariff.traffic_limit_gb
+                    )
+                else:
+                    tariff_traffic_line = texts.t('SUBSCRIPTION_TARIFF_TRAFFIC_UNLIMITED_LINE', 'Трафик: ∞ Безлимит')
 
                 tariff_info_lines = [
-                    f'<b>📦 {html.escape(tariff.name)}</b>',
-                    f'Тип: {tariff_type_str}',
-                    f'Трафик: {tariff.traffic_limit_gb} ГБ' if tariff.traffic_limit_gb > 0 else 'Трафик: ∞ Безлимит',
-                    f'Устройства: {tariff.device_limit}',
+                    texts.t('SUBSCRIPTION_TARIFF_NAME_LINE', '<b>📦 {tariff_name}</b>').format(
+                        tariff_name=html.escape(tariff.name)
+                    ),
+                    texts.t('SUBSCRIPTION_TARIFF_TYPE_LINE', 'Тип: {tariff_type}').format(tariff_type=tariff_type_str),
+                    tariff_traffic_line,
+                    texts.t('SUBSCRIPTION_TARIFF_DEVICES_LINE', 'Устройства: {device_limit}').format(
+                        device_limit=tariff.device_limit
+                    ),
                 ]
 
                 if is_daily:
@@ -384,7 +433,11 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
                     else:
                         daily_kopeks = raw_daily_kopeks
                     daily_price = daily_kopeks / 100
-                    tariff_info_lines.append(f'Цена: {daily_price:.2f} ₽/день')
+                    tariff_info_lines.append(
+                        texts.t('SUBSCRIPTION_TARIFF_DAILY_PRICE_LINE', 'Цена: {price} ₽/день').format(
+                            price=f'{daily_price:.2f}'
+                        )
+                    )
 
                     # Прогресс-бар до следующего списания
                     last_charge = getattr(subscription, 'last_daily_charge_at', None)
@@ -392,7 +445,9 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
                     if is_paused:
                         tariff_info_lines.append('')
-                        tariff_info_lines.append('⏸️ <b>Подписка приостановлена</b>')
+                        tariff_info_lines.append(
+                            texts.t('SUBSCRIPTION_TARIFF_DAILY_PAUSED', '⏸️ <b>Подписка приостановлена</b>')
+                        )
                         # Показываем оставшееся время даже при паузе
                         if last_charge:
                             next_charge = last_charge + timedelta(hours=24)
@@ -401,8 +456,15 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
                                 time_until = next_charge - now
                                 hours_left = time_until.seconds // 3600
                                 minutes_left = (time_until.seconds % 3600) // 60
-                                tariff_info_lines.append(f'⏳ Осталось: {hours_left}ч {minutes_left}мин')
-                                tariff_info_lines.append('💤 Списание приостановлено')
+                                tariff_info_lines.append(
+                                    texts.t(
+                                        'SUBSCRIPTION_TARIFF_DAILY_TIME_LEFT',
+                                        '⏳ Осталось: {hours}ч {minutes}мин',
+                                    ).format(hours=hours_left, minutes=minutes_left)
+                                )
+                                tariff_info_lines.append(
+                                    texts.t('SUBSCRIPTION_TARIFF_DAILY_CHARGE_PAUSED', '💤 Списание приостановлено')
+                                )
                     elif last_charge:
                         next_charge = last_charge + timedelta(hours=24)
                         now = datetime.now(UTC)
@@ -424,11 +486,22 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
                             progress_bar = '▓' * filled + '░' * empty
 
                             tariff_info_lines.append('')
-                            tariff_info_lines.append(f'⏳ До списания: {hours_left}ч {minutes_left}мин')
-                            tariff_info_lines.append(f'[{progress_bar}] {percent:.0f}%')
+                            tariff_info_lines.append(
+                                texts.t(
+                                    'SUBSCRIPTION_TARIFF_DAILY_NEXT_CHARGE',
+                                    '⏳ До списания: {hours}ч {minutes}мин',
+                                ).format(hours=hours_left, minutes=minutes_left)
+                            )
+                            tariff_info_lines.append(
+                                texts.t('SUBSCRIPTION_TARIFF_DAILY_PROGRESS', '[{bar}] {percent}%').format(
+                                    bar=progress_bar, percent=f'{percent:.0f}'
+                                )
+                            )
                     else:
                         tariff_info_lines.append('')
-                        tariff_info_lines.append('⏳ Первое списание скоро')
+                        tariff_info_lines.append(
+                            texts.t('SUBSCRIPTION_TARIFF_DAILY_FIRST_CHARGE', '⏳ Первое списание скоро')
+                        )
 
                 tariff_info_block = '\n<blockquote expandable>' + '\n'.join(tariff_info_lines) + '</blockquote>'
 
@@ -497,14 +570,17 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             'SUBSCRIPTION_CONNECTED_DEVICES_TITLE',
             '<blockquote>📱 <b>Подключенные устройства:</b>\n',
         )
+        unknown_device = texts.t('SUBSCRIPTION_DEVICE_UNKNOWN', 'Unknown')
         for device in devices_list[:5]:
-            platform = device.get('platform', 'Unknown')
-            device_model = device.get('deviceModel', 'Unknown')
-            device_info = f'{platform} - {device_model}'
+            platform = device.get('platform', unknown_device)
+            device_model = device.get('deviceModel', unknown_device)
+            device_info = texts.t('SUBSCRIPTION_DEVICE_LINE', '{platform} - {model}').format(
+                platform=platform, model=device_model
+            )
 
             if len(device_info) > 35:
                 device_info = device_info[:32] + '...'
-            message += f'• {device_info}\n'
+            message += texts.t('SUBSCRIPTION_DEVICE_ITEM', '• {device}\n').format(device=device_info)
         message += texts.t('SUBSCRIPTION_CONNECTED_DEVICES_FOOTER', '</blockquote>')
 
     # Отображаем докупленный трафик
@@ -550,16 +626,26 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
                 # Формируем текст о времени
                 if days_remaining == 0:
-                    time_text = 'истекает сегодня'
+                    time_text = texts.t('SUBSCRIPTION_PURCHASED_EXPIRES_TODAY', 'истекает сегодня')
                 elif days_remaining == 1:
-                    time_text = 'остался 1 день'
+                    time_text = texts.t('SUBSCRIPTION_PURCHASED_ONE_DAY_LEFT', 'остался 1 день')
                 elif days_remaining < 5:
-                    time_text = f'осталось {days_remaining} дня'
+                    time_text = texts.t('SUBSCRIPTION_PURCHASED_FEW_DAYS_LEFT', 'осталось {days} дня').format(
+                        days=days_remaining
+                    )
                 else:
-                    time_text = f'осталось {days_remaining} дней'
+                    time_text = texts.t('SUBSCRIPTION_PURCHASED_MANY_DAYS_LEFT', 'осталось {days} дней').format(
+                        days=days_remaining
+                    )
 
-                message += f'• {purchase.traffic_gb} ГБ — {time_text}\n'
-                message += f'  {bar} {progress_percent:.0f}% | до {expire_date}\n'
+                message += texts.t('SUBSCRIPTION_PURCHASED_TRAFFIC_ITEM', '• {traffic_gb} ГБ — {time_text}\n').format(
+                    traffic_gb=purchase.traffic_gb,
+                    time_text=time_text,
+                )
+                message += texts.t(
+                    'SUBSCRIPTION_PURCHASED_TRAFFIC_PROGRESS',
+                    '  {bar} {percent}% | до {expire_date}\n',
+                ).format(bar=bar, percent=f'{progress_percent:.0f}', expire_date=expire_date)
 
             message += texts.t('SUBSCRIPTION_PURCHASED_TRAFFIC_FOOTER', '</blockquote>')
 
@@ -583,14 +669,7 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             '📱 Скопируйте ссылку и добавьте в ваше VPN приложение',
         )
 
-    await callback.message.edit_text(
-        message,
-        reply_markup=get_subscription_keyboard(
-            db_user.language, has_subscription=True, is_trial=subscription.is_trial, subscription=subscription
-        ),
-        parse_mode='HTML',
-    )
-    await callback.answer()
+    return message
 
 
 async def show_trial_offer(callback: types.CallbackQuery, db_user: User, db: AsyncSession):

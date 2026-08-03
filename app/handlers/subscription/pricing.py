@@ -298,25 +298,20 @@ async def get_subscription_info_text(subscription, texts, db_user, db: AsyncSess
     subscription_url = getattr(subscription, 'subscription_url', None) or 'Генерируется...'
 
     if subscription.is_trial:
-        status_text = '🎁 Тестовая'
-        type_text = 'Триал'
+        status_text = texts.t('SUBSCRIPTION_INFO_STATUS_TRIAL', '🎁 Тестовая')
+        type_text = texts.t('SUBSCRIPTION_INFO_TYPE_TRIAL', 'Триал')
     else:
         if subscription.is_active:
-            status_text = '✅ Оплачена'
+            status_text = texts.t('SUBSCRIPTION_INFO_STATUS_PAID', '✅ Оплачена')
         else:
-            status_text = '⌛ Истекла'
-        type_text = 'Платная подписка'
+            status_text = texts.t('SUBSCRIPTION_INFO_STATUS_EXPIRED', '⌛ Истекла')
+        type_text = texts.t('SUBSCRIPTION_INFO_TYPE_PAID', 'Платная подписка')
 
     traffic_limit = subscription.traffic_limit_gb or 0
     if traffic_limit == 0:
-        if settings.is_traffic_fixed():
-            traffic_text = '∞ Безлимитный'
-        else:
-            traffic_text = '∞ Безлимитный'
-    elif settings.is_traffic_fixed():
-        traffic_text = f'{traffic_limit} ГБ'
+        traffic_text = texts.t('SUBSCRIPTION_INFO_TRAFFIC_UNLIMITED', '∞ Безлимитный')
     else:
-        traffic_text = f'{traffic_limit} ГБ'
+        traffic_text = texts.t('SUBSCRIPTION_INFO_TRAFFIC_LIMITED', '{traffic_gb} ГБ').format(traffic_gb=traffic_limit)
 
     subscription_cost = await get_subscription_cost(subscription, db)
 
@@ -341,11 +336,18 @@ async def get_subscription_info_text(subscription, texts, db_user, db: AsyncSess
         countries_count=len(subscription.connected_squads or []),
         devices_used=devices_used,
         devices_limit=subscription.device_limit,
-        autopay_status='✅ Включен' if subscription.autopay_enabled else '⌛ Выключен',
+        autopay_status=(
+            texts.t('SUBSCRIPTION_INFO_AUTOPAY_ON', '✅ Включен')
+            if subscription.autopay_enabled
+            else texts.t('SUBSCRIPTION_INFO_AUTOPAY_OFF', '⌛ Выключен')
+        ),
     )
 
     if subscription_cost > 0:
-        info_text += f'\n💰 <b>Стоимость подписки в месяц:</b> {texts.format_price(subscription_cost)}'
+        info_text += texts.t(
+            'SUBSCRIPTION_INFO_MONTHLY_COST',
+            '\n💰 <b>Стоимость подписки в месяц:</b> {price}',
+        ).format(price=texts.format_price(subscription_cost))
 
     # Отображаем докупленный трафик
     if (subscription.traffic_limit_gb or 0) > 0:  # Только для лимитированных тарифов
@@ -364,7 +366,7 @@ async def get_subscription_info_text(subscription, texts, db_user, db: AsyncSess
         purchases = purchases_result.scalars().all()
 
         if purchases:
-            info_text += '\n\n📦 <b>Докупленный трафик:</b>'
+            info_text += texts.t('SUBSCRIPTION_INFO_PURCHASED_TRAFFIC_TITLE', '\n\n📦 <b>Докупленный трафик:</b>')
 
             for purchase in purchases:
                 time_remaining = purchase.expires_at - now
@@ -387,18 +389,37 @@ async def get_subscription_info_text(subscription, texts, db_user, db: AsyncSess
 
                 # Формируем текст о времени
                 if days_remaining == 0:
-                    time_text = 'истекает сегодня'
+                    time_text = texts.t('SUBSCRIPTION_INFO_PURCHASED_EXPIRES_TODAY', 'истекает сегодня')
                 elif days_remaining == 1:
-                    time_text = 'остался 1 день'
+                    time_text = texts.t('SUBSCRIPTION_INFO_PURCHASED_ONE_DAY_LEFT', 'остался 1 день')
                 elif days_remaining < 5:
-                    time_text = f'осталось {days_remaining} дня'
+                    time_text = texts.t('SUBSCRIPTION_INFO_PURCHASED_FEW_DAYS_LEFT', 'осталось {days} дня').format(
+                        days=days_remaining
+                    )
                 else:
-                    time_text = f'осталось {days_remaining} дней'
+                    time_text = texts.t('SUBSCRIPTION_INFO_PURCHASED_MANY_DAYS_LEFT', 'осталось {days} дней').format(
+                        days=days_remaining
+                    )
 
-                info_text += f'\n• {purchase.traffic_gb} ГБ — {time_text}'
-                info_text += f'\n  {bar} {progress_percent:.0f}% | до {expire_date}'
+                info_text += texts.t(
+                    'SUBSCRIPTION_INFO_PURCHASED_TRAFFIC_ITEM', '\n• {traffic_gb} ГБ — {time_text}'
+                ).format(
+                    traffic_gb=purchase.traffic_gb,
+                    time_text=time_text,
+                )
+                info_text += texts.t(
+                    'SUBSCRIPTION_INFO_PURCHASED_TRAFFIC_PROGRESS',
+                    '\n  {bar} {percent}% | до {expire_date}',
+                ).format(
+                    bar=bar,
+                    percent=f'{progress_percent:.0f}',
+                    expire_date=expire_date,
+                )
 
     if subscription_url and subscription_url != 'Генерируется...' and not settings.should_hide_subscription_link():
-        info_text += f'\n\n🔗 <b>Ваша ссылка для импорта в VPN приложениe:</b>\n<code>{subscription_url}</code>'
+        info_text += texts.t(
+            'SUBSCRIPTION_INFO_IMPORT_LINK',
+            '\n\n🔗 <b>Ваша ссылка для импорта в VPN приложениe:</b>\n<code>{url}</code>',
+        ).format(url=subscription_url)
 
     return info_text
