@@ -28,6 +28,7 @@ from app.handlers.admin import (
     bulk_ban as admin_bulk_ban,
     campaigns as admin_campaigns,
     contests as admin_contests,
+    custom_emoji as admin_custom_emoji,
     daily_contests as admin_daily_contests,
     faq as admin_faq,
     main as admin_main,
@@ -215,6 +216,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     admin_privacy_policy.register_handlers(dp)
     admin_public_offer.register_handlers(dp)
     admin_faq.register_handlers(dp)
+    admin_custom_emoji.register_handlers(dp)
     admin_payments.register_handlers(dp)
     admin_trials.register_handlers(dp)
     admin_tariffs.register_handlers(dp)
@@ -288,6 +290,16 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
             await load_menu_layout_cache()
         except Exception as e:
             logger.warning('Failed to load menu layout cache', error=e)
+
+    try:
+        from app.database.database import AsyncSessionLocal
+        from app.services.custom_emoji_pack_service import load_and_apply
+
+        async with AsyncSessionLocal() as db:
+            summary = await load_and_apply(bot, db)
+        logger.info('Карта кастомных эмодзи загружена', **summary)
+    except Exception as e:
+        logger.warning('Failed to load custom emoji mapping', error=e)
 
     try:
         from app.services.remnawave_retry_queue import remnawave_retry_queue

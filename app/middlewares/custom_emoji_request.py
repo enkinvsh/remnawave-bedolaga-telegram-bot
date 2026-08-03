@@ -29,7 +29,7 @@ from aiogram.methods.base import TelegramType
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from app.config import settings
-from app.utils.custom_emoji import get_leading_emoji_id, substitute_custom_emoji
+from app.utils.custom_emoji import get_enabled_override, get_leading_emoji_id, substitute_custom_emoji
 from app.utils.miniapp_buttons import strip_leading_emoji
 
 
@@ -85,6 +85,18 @@ def _resolve_parse_mode(bot: Bot, value: Any) -> Any:
 def _is_html(bot: Bot, value: Any) -> bool:
     resolved = _resolve_parse_mode(bot, value)
     return isinstance(resolved, str) and resolved.lower() == ParseMode.HTML.value.lower()
+
+
+def _feature_enabled() -> bool:
+    """Настройка из админки главнее env, но читается ТОЛЬКО из памяти: это горячий путь.
+
+    Кеш обновляется на старте и при каждом изменении в админке — запроса в БД на
+    сообщение здесь быть не должно.
+    """
+    override = get_enabled_override()
+    if override is not None:
+        return override
+    return bool(settings.CUSTOM_EMOJI_ENABLED)
 
 
 def _chat_allowed(chat_id: Any) -> bool:
@@ -155,7 +167,7 @@ class CustomEmojiRequestMiddleware(BaseRequestMiddleware):
         return await make_request(bot, prepared)
 
     def _transform(self, bot: Bot, method: TelegramMethod[TelegramType]) -> TelegramMethod[TelegramType]:
-        if not settings.CUSTOM_EMOJI_ENABLED:
+        if not _feature_enabled():
             return method
         if not _chat_allowed(getattr(method, 'chat_id', None)):
             return method

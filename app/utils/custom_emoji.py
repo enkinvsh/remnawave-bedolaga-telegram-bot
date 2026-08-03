@@ -26,7 +26,10 @@ TAG_MARKER: Final[str] = '<tg-emoji'
 #: Длину подстановка НЕ увеличивает: лимит текста считается ПОСЛЕ парсинга entity.
 MAX_SUBSTITUTIONS_PER_FIELD: Final[int] = 50
 
-DEFAULT_MAP_PATH: Final[Path] = Path(__file__).resolve().parents[2] / 'assets' / 'custom_emoji' / 'map.json'
+_ASSETS_DIR: Final[Path] = Path(__file__).resolve().parents[2] / 'assets' / 'custom_emoji'
+DEFAULT_MAP_PATH: Final[Path] = _ASSETS_DIR / 'map.json'
+DEFAULT_ALIASES_PATH: Final[Path] = _ASSETS_DIR / 'aliases.json'
+DEFAULT_USAGE_PATH: Final[Path] = _ASSETS_DIR / 'usage.json'
 
 _EMOJI_ID_RE: Final[re.Pattern[str]] = re.compile(r'^\d{1,32}$')
 
@@ -54,6 +57,60 @@ class EmojiMapping:
 _EMPTY_MAPPING: Final[EmojiMapping] = EmojiMapping(emoji_map=MappingProxyType({}), pattern=None)
 
 _cached_mapping: EmojiMapping | None = None
+
+#: Рантайм-переключатель из БД. None -> решает env-флаг (мастер kill switch на холодный старт).
+_enabled_override: bool | None = None
+
+
+def _read_json_section(path: Path, section: str) -> dict:
+    """Прочитать секцию JSON-ассета. Любая ошибка -> пустой dict, исключение не поднимается."""
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        logger.warning('JSON-ассет кастомных эмодзи не найден', path=str(path), section=section)
+        return {}
+    except (OSError, ValueError) as error:
+        logger.warning('Не удалось прочитать JSON-ассет', path=str(path), section=section, error=str(error))
+        return {}
+
+    data = payload.get(section) if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        logger.warning('JSON-ассет имеет неверный формат', path=str(path), section=section)
+        return {}
+    return data
+
+
+def load_aliases(path: Path | str | None = None) -> dict[str, str]:
+    """Прочитать пак-НЕЗАВИСИМЫЕ замены «эмодзи -> эмодзи» (например 🔍 -> 🔎)."""
+    target = Path(path) if path is not None else DEFAULT_ALIASES_PATH
+    raw = _read_json_section(target, 'aliases')
+    return {
+        alias.replace(VS16, ''): value.replace(VS16, '')
+        for alias, value in raw.items()
+        if isinstance(alias, str) and isinstance(value, str) and alias.replace(VS16, '') and value.replace(VS16, '')
+    }
+
+
+def load_usage(path: Path | str | None = None) -> dict[str, int]:
+    """Прочитать частотность эмодзи в текстах бота — по ней считается покрытие пака."""
+    target = Path(path) if path is not None else DEFAULT_USAGE_PATH
+    raw = _read_json_section(target, 'usage')
+    return {
+        emoji.replace(VS16, ''): count
+        for emoji, count in raw.items()
+        if isinstance(emoji, str) and emoji.replace(VS16, '') and isinstance(count, int) and not isinstance(count, bool)
+    }
+
+
+def set_enabled_override(value: bool | None) -> None:
+    """Записать рантайм-состояние фичи (None = отдать решение env-флагу)."""
+    global _enabled_override
+    _enabled_override = value
+
+
+def get_enabled_override() -> bool | None:
+    """Прочитать рантайм-состояние фичи из памяти — без похода в БД (горячий путь)."""
+    return _enabled_override
 
 
 def build_mapping(raw: Mapping[str, object]) -> EmojiMapping:
@@ -114,8 +171,19 @@ def get_mapping() -> EmojiMapping:
     return _cached_mapping
 
 
+def set_mapping(mapping: EmojiMapping) -> None:
+    """Заменить активную карту целиком — атомарно, одним присваиванием.
+
+    Вызывается админкой после пересборки карты из паков: подстановка начинает
+    работать НЕМЕДЛЕННО, без рестарта. Карта собирается ДО присваивания, поэтому
+    параллельные запросы всегда видят либо старую, либо новую карту целиком.
+    """
+    global _cached_mapping
+    _cached_mapping = mapping
+
+
 def reset_mapping_cache() -> None:
-    """Сбросить модульный кеш карты (используется в тестах)."""
+    """Сбросить модульный кеш карты — следующее обращение перечитает встроенный ассет."""
     global _cached_mapping
     _cached_mapping = None
 

@@ -219,6 +219,12 @@ def get_admin_settings_submenu_keyboard(language: str = 'ru') -> InlineKeyboardM
             ],
             [
                 InlineKeyboardButton(
+                    text=_t(texts, 'ADMIN_SETTINGS_CUSTOM_EMOJI', '😀 Кастомные эмодзи'),
+                    callback_data='admin_custom_emoji',
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=_t(texts, 'ADMIN_SETTINGS_REQUIRED_CHANNELS', '📢 Обязательные каналы'),
                     callback_data='reqch:list',
                 )

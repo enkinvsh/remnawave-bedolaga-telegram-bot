@@ -7,6 +7,7 @@ from . import (
     bulk_ban,
     campaigns,
     contests,
+    custom_emoji,
     daily_contests,
     faq,
     main,

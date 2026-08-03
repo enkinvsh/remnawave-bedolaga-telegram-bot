@@ -8,10 +8,15 @@ import pytest
 from app.utils.custom_emoji import (
     MAX_SUBSTITUTIONS_PER_FIELD,
     build_mapping,
+    get_enabled_override,
     get_leading_emoji_id,
     get_mapping,
+    load_aliases,
     load_mapping,
+    load_usage,
     reset_mapping_cache,
+    set_enabled_override,
+    set_mapping,
     substitute_custom_emoji,
 )
 
@@ -29,8 +34,10 @@ def mapping():
 @pytest.fixture(autouse=True)
 def _clean_cache():
     reset_mapping_cache()
+    set_enabled_override(None)
     yield
     reset_mapping_cache()
+    set_enabled_override(None)
 
 
 def test_module_does_not_import_aiogram():
@@ -292,3 +299,85 @@ def test_real_asset_loads():
 
 def test_get_mapping_is_cached():
     assert get_mapping() is get_mapping()
+
+
+def test_set_mapping_replaces_active_mapping():
+    replacement = build_mapping({'✅': '999'})
+
+    set_mapping(replacement)
+
+    assert get_mapping() is replacement
+    assert substitute_custom_emoji('✅') == '<tg-emoji emoji-id="999">✅</tg-emoji>'
+    assert get_leading_emoji_id('✅ Готово') == '999'
+
+
+def test_set_mapping_is_not_overwritten_by_lazy_load():
+    set_mapping(build_mapping({'✅': '999'}))
+
+    assert get_mapping().emoji_map == {'✅': '999'}
+    assert get_mapping().emoji_map == {'✅': '999'}
+
+
+def test_reset_cache_restores_bundled_asset():
+    set_mapping(build_mapping({'✅': '999'}))
+    reset_mapping_cache()
+
+    assert len(get_mapping().emoji_map) > 200
+
+
+def test_load_aliases_real_asset():
+    aliases = load_aliases()
+
+    assert aliases['🔍'] == '🔎'
+    assert len(aliases) == 23
+    assert all(isinstance(key, str) and isinstance(value, str) for key, value in aliases.items())
+
+
+def test_load_usage_real_asset():
+    usage = load_usage()
+
+    assert usage['❌'] == 2257
+    assert len(usage) == 250
+    assert sum(usage.values()) == 16397
+
+
+def test_load_aliases_missing_file(tmp_path):
+    assert load_aliases(tmp_path / 'nope.json') == {}
+
+
+def test_load_usage_missing_file(tmp_path):
+    assert load_usage(tmp_path / 'nope.json') == {}
+
+
+def test_load_aliases_broken_json(tmp_path):
+    path = tmp_path / 'aliases.json'
+    path.write_text('{broken', encoding='utf-8')
+
+    assert load_aliases(path) == {}
+
+
+def test_load_usage_broken_json(tmp_path):
+    path = tmp_path / 'usage.json'
+    path.write_text('{broken', encoding='utf-8')
+
+    assert load_usage(path) == {}
+
+
+def test_load_usage_drops_non_integer_counts(tmp_path):
+    path = tmp_path / 'usage.json'
+    path.write_text('{"usage": {"✅": 5, "❌": "many", "💡": null}}', encoding='utf-8')
+
+    assert load_usage(path) == {'✅': 5}
+
+
+def test_enabled_override_roundtrip():
+    assert get_enabled_override() is None
+
+    set_enabled_override(True)
+    assert get_enabled_override() is True
+
+    set_enabled_override(False)
+    assert get_enabled_override() is False
+
+    set_enabled_override(None)
+    assert get_enabled_override() is None

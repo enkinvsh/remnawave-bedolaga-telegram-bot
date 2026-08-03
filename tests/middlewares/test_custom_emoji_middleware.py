@@ -43,7 +43,9 @@ TOKEN = '123456:AAHnotarealtokenAAHnotarealtokenAAA'
 def _enable_feature(monkeypatch):
     monkeypatch.setattr(settings, 'CUSTOM_EMOJI_ENABLED', True, raising=False)
     monkeypatch.setattr(settings, 'CUSTOM_EMOJI_TEST_CHAT_IDS', '', raising=False)
+    custom_emoji_module.set_enabled_override(None)
     yield
+    custom_emoji_module.set_enabled_override(None)
 
 
 @pytest.fixture
@@ -634,6 +636,70 @@ async def test_button_failure_falls_through_to_original(middleware, bot, make_re
 
     assert calls == [method]
     assert result is method
+
+
+@pytest.mark.asyncio
+async def test_db_override_can_enable_when_env_flag_is_off(middleware, bot, make_request, calls, monkeypatch):
+    """Настройка из БД (кеш в памяти) главнее env — иначе админка не работала бы без редеплоя."""
+    monkeypatch.setattr(settings, 'CUSTOM_EMOJI_ENABLED', False, raising=False)
+    custom_emoji_module.set_enabled_override(True)
+    method = SendMessage(chat_id=1, text=CHECK)
+
+    await middleware(make_request, bot, method)
+
+    assert '<tg-emoji' in calls[0].text
+
+
+@pytest.mark.asyncio
+async def test_db_override_can_disable_when_env_flag_is_on(middleware, bot, make_request, calls, monkeypatch):
+    monkeypatch.setattr(settings, 'CUSTOM_EMOJI_ENABLED', True, raising=False)
+    custom_emoji_module.set_enabled_override(False)
+    method = SendMessage(chat_id=1, text=CHECK)
+
+    await middleware(make_request, bot, method)
+
+    assert calls[0].text == CHECK
+
+
+@pytest.mark.asyncio
+async def test_env_flag_used_when_no_db_override(middleware, bot, make_request, calls, monkeypatch):
+    monkeypatch.setattr(settings, 'CUSTOM_EMOJI_ENABLED', False, raising=False)
+    custom_emoji_module.set_enabled_override(None)
+    method = SendMessage(chat_id=1, text=CHECK)
+
+    await middleware(make_request, bot, method)
+
+    assert calls[0].text == CHECK
+
+
+@pytest.mark.asyncio
+async def test_middleware_never_touches_the_database(middleware, bot, make_request, calls, monkeypatch):
+    """Middleware на горячем пути: запрос в БД на каждое сообщение недопустим."""
+    import app.database.database as database_module
+
+    def boom(*args, **kwargs):
+        raise AssertionError('middleware must not open a DB session')
+
+    monkeypatch.setattr(database_module, 'AsyncSessionLocal', boom)
+    method = SendMessage(chat_id=1, text=CHECK)
+
+    await middleware(make_request, bot, method)
+
+    assert '<tg-emoji' in calls[0].text
+
+
+@pytest.mark.asyncio
+async def test_runtime_mapping_replacement_is_used(middleware, bot, make_request, calls):
+    """set_mapping из админки должен действовать НЕМЕДЛЕННО, без рестарта."""
+    custom_emoji_module.set_mapping(custom_emoji_module.build_mapping({CHECK: '424242'}))
+    try:
+        method = SendMessage(chat_id=1, text=CHECK)
+
+        await middleware(make_request, bot, method)
+
+        assert calls[0].text == f'<tg-emoji emoji-id="424242">{CHECK}</tg-emoji>'
+    finally:
+        custom_emoji_module.reset_mapping_cache()
 
 
 def test_create_bot_registers_middleware():

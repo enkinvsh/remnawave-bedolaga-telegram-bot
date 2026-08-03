@@ -238,6 +238,10 @@ class BotConfigStates(StatesGroup):
     waiting_for_import_file = State()
 
 
+class CustomEmojiStates(StatesGroup):
+    waiting_for_pack_link = State()
+
+
 class PricingStates(StatesGroup):
     waiting_for_value = State()
 
