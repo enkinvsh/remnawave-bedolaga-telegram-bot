@@ -1350,7 +1350,8 @@ async def _get_multi_tariff_status(user, texts, db: AsyncSession) -> tuple[str, 
     current_time = datetime.now(UTC)
     lines: list[str] = []
     for sub in subscriptions:
-        tariff_name = html.escape(sub.tariff.name) if sub.tariff else 'Подписка'
+        fallback_name = texts.t('SUB_MULTI_FALLBACK_NAME', 'Подписка')
+        tariff_name = html.escape(sub.tariff.name) if sub.tariff else fallback_name
         actual = sub.actual_status
 
         if actual in ('active', 'trial'):
@@ -1361,15 +1362,18 @@ async def _get_multi_tariff_status(user, texts, db: AsyncSession) -> tuple[str, 
             emoji = '🔴'
 
         if actual == 'expired':
-            status_suffix = ' — истекла'
+            status_suffix = texts.t('SUB_MULTI_SUFFIX_EXPIRED', ' — истекла')
         elif actual == 'disabled':
-            status_suffix = ' — отключена'
+            status_suffix = texts.t('SUB_MULTI_SUFFIX_DISABLED', ' — отключена')
         elif actual == 'limited':
-            status_suffix = ' — лимит трафика'
+            status_suffix = texts.t('SUB_MULTI_SUFFIX_LIMITED', ' — лимит трафика')
         elif sub.end_date and sub.end_date > current_time:
             days_left = (sub.end_date - current_time).days
             end_str = format_local_datetime(sub.end_date, '%d.%m.%Y')
-            status_suffix = f' — до {end_str} ({days_left} дн.)'
+            status_suffix = texts.t('SUB_MULTI_SUFFIX_UNTIL', ' — до {end_date} ({days} дн.)').format(
+                end_date=end_str,
+                days=days_left,
+            )
         else:
             status_suffix = ''
 
@@ -1409,7 +1413,9 @@ async def get_main_menu_text(user, texts, db: AsyncSession):
                 tariff = await get_tariff_by_id(db, subscription.tariff_id)
                 if tariff:
                     is_daily_tariff = getattr(tariff, 'is_daily', False)
-                    tariff_info_block = f'\n📦 Тариф: {html.escape(tariff.name)}'
+                    tariff_info_block = texts.t('MAIN_MENU_TARIFF_LINE', '\n📦 Тариф: {tariff_name}').format(
+                        tariff_name=html.escape(tariff.name)
+                    )
             except Exception as e:
                 logger.debug('Не удалось загрузить тариф для главного меню', error=e)
 

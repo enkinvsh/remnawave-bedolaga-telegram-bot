@@ -1965,5 +1965,11 @@
   "DEVICE_RENAME_TOO_LONG": "⚠️ نام بیش از حد طولانی است، به {max_len} نویسه کوتاه شد.",
   "AUTOPAY_NOT_AVAILABLE_FOR_DAILY": "پرداخت خودکار برای طرح‌های روزانه در دسترس نیست. کسر مبلغ روزی یک‌بار به‌طور خودکار انجام می‌شود.",
   "AUTOPAY_NOT_AVAILABLE_TRIAL": "پرداخت خودکار برای اشتراک‌های آزمایشی در دسترس نیست.",
-  "AUTOPAY_NOT_AVAILABLE_CLASSIC": "پرداخت خودکار در دسترس نیست. برای تمدید باید یک طرح انتخاب کنید."
+  "AUTOPAY_NOT_AVAILABLE_CLASSIC": "پرداخت خودکار در دسترس نیست. برای تمدید باید یک طرح انتخاب کنید.",
+  "MAIN_MENU_TARIFF_LINE": "\n📦 تعرفه: {tariff_name}",
+  "SUB_MULTI_FALLBACK_NAME": "اشتراک",
+  "SUB_MULTI_SUFFIX_EXPIRED": " — منقضی شده",
+  "SUB_MULTI_SUFFIX_DISABLED": " — غیرفعال",
+  "SUB_MULTI_SUFFIX_LIMITED": " — محدودیت ترافیک",
+  "SUB_MULTI_SUFFIX_UNTIL": " — تا {end_date} ({days} روز)"
 }

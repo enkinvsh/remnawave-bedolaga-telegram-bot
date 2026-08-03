@@ -12,6 +12,7 @@ from app.localization.loader import (
     load_locale,
 )
 from app.localization.overrides import get_override
+from app.localization.tracing import record_key
 
 
 _logger = structlog.get_logger(__name__)
@@ -196,22 +197,26 @@ class Texts:
         # override для 'ru' не должен протекать в 'en'.
         override = get_override(self.language, item)
         if override is not None:
-            return override
+            value = override
+        elif item in self._values:
+            value = self._values[item]
+        elif item in self._fallback_values:
+            value = self._fallback_values[item]
+        else:
+            # Предупреждаем только когда у вызова НЕТ запасного текста. t(key, default) и
+            # get(key, default) передают warn=False: для них отсутствие ключа штатно —
+            # показывается переданный fallback (часто это динамическая строка вроде
+            # настраиваемого названия платёжки), засорять логи warning'ами не нужно.
+            # Доступ через атрибут/[] без запасного варианта по-прежнему предупреждает.
+            if warn:
+                _logger.warning('Missing localization key', item=item, language=self.language)
+            raise KeyError(item)
 
-        if item in self._values:
-            return self._values[item]
-
-        if item in self._fallback_values:
-            return self._fallback_values[item]
-
-        # Предупреждаем только когда у вызова НЕТ запасного текста. t(key, default) и
-        # get(key, default) передают warn=False: для них отсутствие ключа штатно —
-        # показывается переданный fallback (часто это динамическая строка вроде
-        # настраиваемого названия платёжки), засорять логи warning'ами не нужно.
-        # Доступ через атрибут/[] без запасного варианта по-прежнему предупреждает.
-        if warn:
-            _logger.warning('Missing localization key', item=item, language=self.language)
-        raise KeyError(item)
+        # Опциональная трассировка для превью экранов в кабинете. По умолчанию
+        # ВЫКЛЮЧЕНА и стоит один ContextVar.get() + `is None`: ни аллокаций, ни
+        # I/O, ни логов. Ненайденный ключ не пишется. См. localization/tracing.py.
+        record_key(item)
+        return value
 
     @staticmethod
     def format_price(kopeks: int, round_kopeks: bool | None = None) -> str:

@@ -22,6 +22,7 @@ from app.database.crud.locale_override import (
 from app.database.models import User
 from app.localization.loader import DEFAULT_LANGUAGE, load_locale
 from app.localization.overrides import load_overrides
+from app.services.screen_preview import get_screen, list_screens, render_screen
 
 from ..dependencies import get_cabinet_db, require_permission
 
@@ -98,6 +99,13 @@ class LocaleImportRequest(BaseModel):
     overrides: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
+class ScreenPreviewRequest(BaseModel):
+    """Render one screen; ``draft`` carries unsaved edits for this render only."""
+
+    language: str = Field(default=DEFAULT_LANGUAGE)
+    draft: dict[str, str] | None = Field(default=None)
+
+
 # ============ Endpoints ============
 
 
@@ -172,6 +180,59 @@ async def export_locale_overrides(
         payload.setdefault(row.language, {})[row.key] = row.value
 
     return {'overrides': payload, 'total': len(rows)}
+
+
+# NOTE: как и `/export`, обе `/screens`-ручки ОБЯЗАНЫ стоять до `/{key}` —
+# иначе FastAPI уводит GET /screens в обработчик ключа и отвечает 404.
+@router.get('/screens', summary='List previewable bot screens')
+async def list_preview_screens(
+    _admin: User = Depends(require_permission('settings:read')),
+) -> dict[str, Any]:
+    """Экраны, которые можно посмотреть целиком и править построчно.
+
+    Плоский список ключей нечитаем: чтобы поправить главное меню, надо найти
+    среди ~2000 ключей те шесть, из которых оно собрано. Здесь единица работы —
+    экран.
+    """
+    screens = [{'id': screen.id, 'title': screen.title, 'description': screen.description} for screen in list_screens()]
+    return {
+        'screens': screens,
+        'total': len(screens),
+        'available_languages': AVAILABLE_LANGUAGES,
+    }
+
+
+@router.post('/screens/{screen_id}/preview', summary='Render a screen and list the strings it is made of')
+async def preview_locale_screen(
+    screen_id: str,
+    data: ScreenPreviewRequest,
+    _admin: User = Depends(require_permission('settings:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> dict[str, Any]:
+    """Отрендерить экран хендлером бота и вернуть текст + использованные ключи.
+
+    ``draft`` — несохранённые правки; применяются ТОЛЬКО к этому рендеру и
+    никогда не попадают в глобальный кеш override-ов, поэтому ручку можно
+    дёргать на каждое нажатие клавиши.
+    """
+    if get_screen(screen_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Unknown screen: {screen_id}',
+        )
+
+    _validate_language(data.language)
+
+    draft = data.draft or None
+    if draft:
+        for key, value in draft.items():
+            if len(value) > MAX_VALUE_LENGTH:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f'Draft value for {key} exceeds {MAX_VALUE_LENGTH} characters',
+                )
+
+    return await render_screen(screen_id, data.language, db, draft=draft)
 
 
 @router.get('/{key}', summary='Get one key across all languages')

@@ -1965,5 +1965,11 @@
   "BUY_TARIFF_BUTTON": "📦 Купити тариф",
   "CONTEST_UNKNOWN": "Тип конкурсу не підтримується.",
   "PERIOD": "Період",
-  "ADMIN_CONTESTS_LIST": "📋 Поточні конкурси"
+  "ADMIN_CONTESTS_LIST": "📋 Поточні конкурси",
+  "MAIN_MENU_TARIFF_LINE": "\n📦 Тариф: {tariff_name}",
+  "SUB_MULTI_FALLBACK_NAME": "Підписка",
+  "SUB_MULTI_SUFFIX_EXPIRED": " — закінчилася",
+  "SUB_MULTI_SUFFIX_DISABLED": " — вимкнена",
+  "SUB_MULTI_SUFFIX_LIMITED": " — ліміт трафіку",
+  "SUB_MULTI_SUFFIX_UNTIL": " — до {end_date} ({days} дн.)"
 }

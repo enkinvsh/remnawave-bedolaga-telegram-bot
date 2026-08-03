@@ -1965,5 +1965,11 @@
   "DEVICE_RENAME_TOO_LONG": "⚠️ Имя слишком длинное, сократили до {max_len} символов.",
   "AUTOPAY_NOT_AVAILABLE_FOR_DAILY": "Автоплатеж недоступен для суточных тарифов. Списание происходит автоматически раз в сутки.",
   "AUTOPAY_NOT_AVAILABLE_TRIAL": "Автоплатеж недоступен для пробных подписок.",
-  "AUTOPAY_NOT_AVAILABLE_CLASSIC": "Автоплатеж недоступен. Для продления необходимо выбрать тариф."
+  "AUTOPAY_NOT_AVAILABLE_CLASSIC": "Автоплатеж недоступен. Для продления необходимо выбрать тариф.",
+  "MAIN_MENU_TARIFF_LINE": "\n📦 Тариф: {tariff_name}",
+  "SUB_MULTI_FALLBACK_NAME": "Подписка",
+  "SUB_MULTI_SUFFIX_EXPIRED": " — истекла",
+  "SUB_MULTI_SUFFIX_DISABLED": " — отключена",
+  "SUB_MULTI_SUFFIX_LIMITED": " — лимит трафика",
+  "SUB_MULTI_SUFFIX_UNTIL": " — до {end_date} ({days} дн.)"
 }

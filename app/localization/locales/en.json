@@ -1965,5 +1965,11 @@
   "ADMIN_USER_REFERRALS_UPDATED": "✅ The referral list has been updated.",
   "ADMIN_USERS_FILTER_POTENTIAL_CUSTOMERS_TITLE": "💰 Potential customers",
   "CHANGE_TARIFF_BUTTON": "📦 Plan",
-  "BUY_TARIFF_BUTTON": "📦 Buy a plan"
+  "BUY_TARIFF_BUTTON": "📦 Buy a plan",
+  "MAIN_MENU_TARIFF_LINE": "\n📦 Tariff: {tariff_name}",
+  "SUB_MULTI_FALLBACK_NAME": "Subscription",
+  "SUB_MULTI_SUFFIX_EXPIRED": " — expired",
+  "SUB_MULTI_SUFFIX_DISABLED": " — disabled",
+  "SUB_MULTI_SUFFIX_LIMITED": " — traffic limit",
+  "SUB_MULTI_SUFFIX_UNTIL": " — until {end_date} ({days} days)"
 }

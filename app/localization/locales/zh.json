@@ -1965,5 +1965,11 @@
   "BUY_TARIFF_BUTTON": "📦 购买套餐",
   "CONTEST_UNKNOWN": "不支持此竞赛类型。",
   "PERIOD": "周期",
-  "ADMIN_CONTESTS_LIST": "📋 当前竞赛"
+  "ADMIN_CONTESTS_LIST": "📋 当前竞赛",
+  "MAIN_MENU_TARIFF_LINE": "\n📦套餐：{tariff_name}",
+  "SUB_MULTI_FALLBACK_NAME": "订阅",
+  "SUB_MULTI_SUFFIX_EXPIRED": " — 已过期",
+  "SUB_MULTI_SUFFIX_DISABLED": " — 已禁用",
+  "SUB_MULTI_SUFFIX_LIMITED": " — 流量已用尽",
+  "SUB_MULTI_SUFFIX_UNTIL": " — 至{end_date}({days}天)"
 }
