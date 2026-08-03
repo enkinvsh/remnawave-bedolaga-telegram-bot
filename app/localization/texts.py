@@ -11,6 +11,7 @@ from app.localization.loader import (
     clear_locale_cache,
     load_locale,
 )
+from app.localization.overrides import get_override
 
 
 _logger = structlog.get_logger(__name__)
@@ -184,6 +185,18 @@ class Texts:
     def _get_value(self, item: str, warn: bool = True) -> Any:
         if item == 'RULES_TEXT':
             return _get_cached_rules_value(self.language)
+
+        # Админский override строки перебивает всё, что ниже — включая
+        # вычисляемые ключи из _build_dynamic_values (TRAFFIC_*, SUPPORT_INFO).
+        # Так и задумано: переопределив TRAFFIC_10GB, админ забирает на себя
+        # форматирование цены для этого ключа.
+        # Ровно один lookup в module-level dict: _get_value вызывается для
+        # каждой строки каждого сообщения, поэтому здесь не должно быть ни БД,
+        # ни await, ни любого другого I/O. Совпадение только по точному языку —
+        # override для 'ru' не должен протекать в 'en'.
+        override = get_override(self.language, item)
+        if override is not None:
+            return override
 
         if item in self._values:
             return self._values[item]

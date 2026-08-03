@@ -2822,6 +2822,30 @@ class SystemSetting(Base):
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
 
 
+class LocaleOverride(Base):
+    """Admin-defined replacement for a bundled localization string.
+
+    One row per (key, language). The bot reads these through an in-memory cache
+    (``app.localization.overrides``), never from the DB on the message path.
+    Deployment-level multi-tenancy (one instance + one DB per client) makes the
+    table implicitly per-tenant — there is deliberately no tenant column.
+    """
+
+    __tablename__ = 'locale_overrides'
+    __table_args__ = (
+        UniqueConstraint('key', 'language', name='uq_locale_overrides_key_lang'),
+        Index('ix_locale_overrides_key', 'key'),
+    )
+
+    id = Column(Integer, primary_key=True)
+    key = Column(String(255), nullable=False)
+    language = Column(String(8), nullable=False)
+    value = Column(Text, nullable=False)
+
+    created_at = Column(AwareDateTime(), nullable=False, server_default=func.now())
+    updated_at = Column(AwareDateTime(), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class EmailTemplate(Base):
     """Custom email template overrides (accessed via raw SQL in cabinet services)."""
 

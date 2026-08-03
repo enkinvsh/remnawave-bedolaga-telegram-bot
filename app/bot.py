@@ -301,6 +301,17 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     except Exception as e:
         logger.warning('Failed to load custom emoji mapping', error=e)
 
+    # Кеш админских override-ов строк локализации. load_overrides сам никогда
+    # не бросает, но оборачиваем на случай проблем с импортом — старт бота не
+    # должен зависеть от этой фичи.
+    try:
+        from app.localization.overrides import load_overrides
+
+        loaded_overrides = await load_overrides()
+        logger.info('Override-ы локализации загружены', loaded=loaded_overrides)
+    except Exception as e:
+        logger.warning('Failed to load locale overrides', error=e)
+
     try:
         from app.services.remnawave_retry_queue import remnawave_retry_queue
 
