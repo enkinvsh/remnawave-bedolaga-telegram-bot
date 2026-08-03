@@ -77,11 +77,12 @@ async def test_full_and_empty_campaign_in_one_pass():
         _Result(rows=[(1, 4)]),  # 3) регистрации: id=1 -> 4
         _Result(rows=[(1, 3, 2)]),  # 4) трайл: id=1 -> users=3, activated=2
         _Result(rows=[(1, 2, 150000)]),  # 5) платящие/выручка: id=1 -> 2 юзера, 150000 коп.
+        _Result(rows=[(1, 3)]),  # 6) paid_users (метрика админ-списка): id=1 -> 3
     )
 
     result = await get_campaigns_aggregate_stats(db, [1, 2])
 
-    assert db.execute.await_count == 5
+    assert db.execute.await_count == 6
     assert [r.campaign_id for r in result] == [1, 2]
 
     active_stats, empty_stats = result
@@ -100,6 +101,7 @@ async def test_full_and_empty_campaign_in_one_pass():
         trial_activated=2,
         paying_users=2,
         total_amount_kopeks=150000,
+        paid_users=3,
     )
     assert empty_stats.campaign_id == 2
     assert empty_stats.starts_total == 0
@@ -109,6 +111,7 @@ async def test_full_and_empty_campaign_in_one_pass():
     assert empty_stats.trial_activated == 0
     assert empty_stats.paying_users == 0
     assert empty_stats.total_amount_kopeks == 0
+    assert empty_stats.paid_users == 0
 
 
 async def test_revenue_kept_in_kopeks_not_rubles():
@@ -120,6 +123,7 @@ async def test_revenue_kept_in_kopeks_not_rubles():
         _Result(rows=[(5, 1)]),
         _Result(rows=[]),  # трайлов нет → фолбэк в нули
         _Result(rows=[(5, 1, 55912)]),  # 559.12 ₽ = 55912 коп.
+        _Result(rows=[(5, 1)]),
     )
 
     [stats] = await get_campaigns_aggregate_stats(db, [5])
@@ -137,6 +141,7 @@ async def test_all_campaigns_when_ids_none():
         _Result(rows=[]),
         _Result(rows=[]),
         _Result(rows=[]),
+        _Result(rows=[]),
     )
 
     result = await get_campaigns_aggregate_stats(db, None)
@@ -144,3 +149,4 @@ async def test_all_campaigns_when_ids_none():
     assert len(result) == 1
     assert result[0].registrations == 0
     assert result[0].paying_users == 0
+    assert result[0].paid_users == 0

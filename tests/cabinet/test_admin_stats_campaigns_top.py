@@ -34,6 +34,7 @@ def _stats(**kwargs) -> CampaignAggregateStats:
         'trial_activated': 0,
         'paying_users': 0,
         'total_amount_kopeks': 0,
+        'paid_users': 0,
     }
     base.update(kwargs)
     return CampaignAggregateStats(**base)

@@ -219,6 +219,7 @@ async def show_campaigns_list(
         db,
         offset=offset,
         limit=_CAMPAIGNS_PAGE_SIZE,
+        with_registrations=True,
     )
     total = await get_campaigns_count(db)
     total_pages = max(1, (total + _CAMPAIGNS_PAGE_SIZE - 1) // _CAMPAIGNS_PAGE_SIZE)

@@ -20,9 +20,8 @@ from app.database.crud.campaign import (
     get_campaign_by_start_parameter,
     get_campaign_statistics,
     get_campaigns_aggregate_stats,
-    get_campaigns_count,
-    get_campaigns_list,
     get_campaigns_overview,
+    get_campaigns_page_with_stats,
     update_campaign,
 )
 from app.database.crud.server_squad import get_all_server_squads
@@ -335,32 +334,50 @@ async def list_campaigns(
     include_inactive: bool = True,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
+    is_active: bool | None = Query(
+        default=None, description='Tri-state status: omit = any, true = active, false = inactive'
+    ),
+    search: str | None = Query(default=None, max_length=100, description='Substring match on name / start_parameter'),
+    sort_by: str = Query(default='created_at', description='created_at | name | registrations | revenue | conversion'),
+    sort_dir: str = Query(default='desc', pattern='^(asc|desc)$'),
+    partner_user_id: int | None = Query(default=None, description='Restrict to campaigns owned by this partner'),
     admin: User = Depends(require_permission('campaigns:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Get list of all campaigns."""
-    campaigns = await get_campaigns_list(db, offset=offset, limit=limit, include_inactive=include_inactive)
-    total = await get_campaigns_count(db, is_active=True if not include_inactive else None)
+    """Get list of campaigns with funnel stats, searched/filtered/sorted server-side.
 
-    items = []
-    for campaign in campaigns:
-        # Get quick stats
-        stats = await get_campaign_statistics(db, campaign.id)
-        items.append(
-            CampaignListItem(
-                id=campaign.id,
-                name=campaign.name,
-                start_parameter=campaign.start_parameter,
-                bonus_type=campaign.bonus_type,
-                is_active=campaign.is_active,
-                registrations_count=stats['registrations'],
-                total_revenue_kopeks=stats['total_revenue_kopeks'],
-                conversion_rate=stats['conversion_rate'],
-                partner_user_id=campaign.partner_user_id,
-                partner_name=_get_partner_name(campaign),
-                created_at=campaign.created_at,
-            )
+    Two DB round-trips regardless of `limit`. Sending none of the search/sort/status params
+    reproduces the previous behaviour exactly (created_at desc, no filtering). `is_active`
+    overrides the older `include_inactive` flag when both are present.
+    """
+    rows, total = await get_campaigns_page_with_stats(
+        db,
+        offset=offset,
+        limit=limit,
+        include_inactive=include_inactive,
+        is_active=is_active,
+        search=search,
+        partner_user_id=partner_user_id,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+
+    items = [
+        CampaignListItem(
+            id=row['id'],
+            name=row['name'],
+            start_parameter=row['start_parameter'],
+            bonus_type=row['bonus_type'],
+            is_active=row['is_active'],
+            registrations_count=row['registrations'],
+            total_revenue_kopeks=row['total_revenue_kopeks'],
+            conversion_rate=row['conversion_rate'],
+            partner_user_id=row['partner_user_id'],
+            partner_name=row['partner_name'],
+            created_at=row['created_at'],
         )
+        for row in rows
+    ]
 
     return CampaignListResponse(campaigns=items, total=total)
 

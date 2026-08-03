@@ -56,6 +56,9 @@ scripts/dev-deploy.sh
 
 # ========== BLACKLIST: игнорируемые внутри папок ==========
 
+# Рабочие планы — локальные, в репозиторий не едут
+docs/plans/
+
 # Python
 __pycache__/
 **/__pycache__/
