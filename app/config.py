@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     ADMIN_IDS: str = ''
     ADMIN_EMAILS: str = ''  # Comma-separated admin emails for email-only users
 
+    # Подстановка кастомных эмодзи в исходящих сообщениях (session request-middleware)
+    CUSTOM_EMOJI_ENABLED: bool = False
+    CUSTOM_EMOJI_TEST_CHAT_IDS: str = ''  # Канареечный список chat_id через запятую; пусто = все чаты
+
     # Test email account for development/testing (bypasses email verification and SMTP)
     TEST_EMAIL: str = ''  # e.g., test@example.com
     TEST_EMAIL_PASSWORD: str = ''  # Password for test account
@@ -1404,6 +1408,21 @@ class Settings(BaseSettings):
                 if not admin_ids.strip():
                     return []
                 return [int(x.strip()) for x in admin_ids.split(',') if x.strip()]
+
+            return []
+
+        except (ValueError, AttributeError):
+            return []
+
+    def get_custom_emoji_test_chat_ids(self) -> list[int]:
+        """Get canary chat ids for custom emoji substitution (empty list = all chats)."""
+        try:
+            chat_ids = self.CUSTOM_EMOJI_TEST_CHAT_IDS
+
+            if isinstance(chat_ids, str):
+                if not chat_ids.strip():
+                    return []
+                return [int(x.strip()) for x in chat_ids.split(',') if x.strip()]
 
             return []
 
