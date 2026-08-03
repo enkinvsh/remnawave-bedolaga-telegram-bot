@@ -6,12 +6,16 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.methods import (
     AnswerCallbackQuery,
+    CopyMessage,
     EditMessageCaption,
+    EditMessageMedia,
     EditMessageReplyMarkup,
     EditMessageText,
     SendMediaGroup,
     SendMessage,
+    SendPaidMedia,
     SendPhoto,
+    SendVoice,
     SetMyCommands,
 )
 from aiogram.types import (
@@ -19,6 +23,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputMediaPhoto,
+    InputPaidMediaPhoto,
     KeyboardButton,
     MessageEntity,
     ReplyKeyboardMarkup,
@@ -271,6 +276,139 @@ async def test_idempotent_on_retry(middleware, bot, make_request, calls):
     await middleware(make_request, bot, calls[0])
 
     assert calls[1].text == calls[0].text
+
+
+@pytest.mark.asyncio
+async def test_edit_message_media_caption_substituted(middleware, bot, make_request, calls):
+    """Прод-баг: caption у EditMessageMedia лежит в method.media.caption (ОДИН объект, не список)."""
+    method = EditMessageMedia(
+        chat_id=1,
+        message_id=2,
+        media=InputMediaPhoto(media='x', caption=f'{CHECK} Подписка', parse_mode='HTML'),
+    )
+
+    await middleware(make_request, bot, method)
+
+    assert calls[0].media.caption == f'<tg-emoji emoji-id="{check_id()}">{CHECK}</tg-emoji> Подписка'
+
+
+@pytest.mark.asyncio
+async def test_edit_message_media_default_parse_mode(middleware, bot, make_request, calls):
+    """У EditMessageMedia НЕТ своего parse_mode: сентинел живёт на элементе media."""
+    method = EditMessageMedia(chat_id=1, message_id=2, media=InputMediaPhoto(media='x', caption=CHECK))
+
+    await middleware(make_request, bot, method)
+
+    assert '<tg-emoji' in calls[0].media.caption
+
+
+@pytest.mark.asyncio
+async def test_edit_message_media_markdown_untouched(middleware, bot, make_request, calls):
+    method = EditMessageMedia(
+        chat_id=1,
+        message_id=2,
+        media=InputMediaPhoto(media='x', caption=CHECK, parse_mode='Markdown'),
+    )
+
+    await middleware(make_request, bot, method)
+
+    assert calls[0].media.caption == CHECK
+
+
+@pytest.mark.asyncio
+async def test_edit_message_media_caption_entities_untouched(middleware, bot, make_request, calls):
+    method = EditMessageMedia(
+        chat_id=1,
+        message_id=2,
+        media=InputMediaPhoto(
+            media='x',
+            caption=CHECK,
+            caption_entities=[MessageEntity(type='bold', offset=0, length=1)],
+        ),
+    )
+
+    await middleware(make_request, bot, method)
+
+    assert calls[0].media.caption == CHECK
+
+
+@pytest.mark.asyncio
+async def test_edit_message_media_converts_caption_and_buttons(middleware, bot, make_request, calls):
+    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='💰 Баланс', callback_data='x')]])
+    method = EditMessageMedia(
+        chat_id=1,
+        message_id=2,
+        media=InputMediaPhoto(media='x', caption=f'{CHECK} Подписка'),
+        reply_markup=markup,
+    )
+
+    await middleware(make_request, bot, method)
+
+    assert '<tg-emoji' in calls[0].media.caption
+    assert calls[0].reply_markup.inline_keyboard[0][0].text == 'Баланс'
+
+
+@pytest.mark.asyncio
+async def test_edit_message_media_original_not_mutated(middleware, bot, make_request, calls):
+    item = InputMediaPhoto(media='x', caption=CHECK)
+    method = EditMessageMedia(chat_id=1, message_id=2, media=item)
+
+    await middleware(make_request, bot, method)
+
+    assert item.caption == CHECK
+    assert method.media is item
+    assert calls[0] is not method
+    assert calls[0].media is not item
+
+
+@pytest.mark.asyncio
+async def test_send_voice_caption_substituted(middleware, bot, make_request, calls):
+    method = SendVoice(chat_id=1, voice='file_id', caption=CHECK)
+
+    await middleware(make_request, bot, method)
+
+    assert '<tg-emoji' in calls[0].caption
+
+
+@pytest.mark.asyncio
+async def test_copy_message_caption_substituted(middleware, bot, make_request, calls):
+    method = CopyMessage(chat_id=1, from_chat_id=2, message_id=3, caption=CHECK)
+
+    await middleware(make_request, bot, method)
+
+    assert '<tg-emoji' in calls[0].caption
+
+
+@pytest.mark.asyncio
+async def test_send_paid_media_caption_substituted_with_explicit_html(middleware, bot, make_request, calls):
+    method = SendPaidMedia(
+        chat_id=1,
+        star_count=1,
+        media=[InputPaidMediaPhoto(media='x')],
+        caption=CHECK,
+        parse_mode='HTML',
+    )
+
+    await middleware(make_request, bot, method)
+
+    assert '<tg-emoji' in calls[0].caption
+    assert calls[0].media[0].media == 'x'
+
+
+@pytest.mark.asyncio
+async def test_send_paid_media_without_parse_mode_untouched(middleware, bot, make_request, calls):
+    """У SendPaidMedia parse_mode = `str | None = None`, БЕЗ Default-сентинела (аномалия aiogram).
+
+    Значит неявный вызов уходит вообще без parse_mode -> Telegram трактует подпись как
+    plain text, и подстановка показала бы юзеру голую разметку.
+    """
+    method = SendPaidMedia(chat_id=1, star_count=1, media=[InputPaidMediaPhoto(media='x')], caption=CHECK)
+
+    assert method.parse_mode is None
+
+    await middleware(make_request, bot, method)
+
+    assert calls[0].caption == CHECK
 
 
 MONEY = '💰'

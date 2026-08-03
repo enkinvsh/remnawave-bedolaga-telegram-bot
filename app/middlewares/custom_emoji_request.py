@@ -9,7 +9,9 @@ from aiogram.client.default import Default
 from aiogram.client.session.middlewares.base import BaseRequestMiddleware, NextRequestMiddlewareType
 from aiogram.enums import ParseMode
 from aiogram.methods import (
+    CopyMessage,
     EditMessageCaption,
+    EditMessageMedia,
     EditMessageText,
     Response,
     SendAnimation,
@@ -17,8 +19,10 @@ from aiogram.methods import (
     SendDocument,
     SendMediaGroup,
     SendMessage,
+    SendPaidMedia,
     SendPhoto,
     SendVideo,
+    SendVoice,
     TelegramMethod,
 )
 from aiogram.methods.base import TelegramType
@@ -40,6 +44,9 @@ TEXT_FIELDS: Final[dict[type[TelegramMethod[Any]], str]] = {
     SendDocument: 'caption',
     SendAudio: 'caption',
     SendAnimation: 'caption',
+    SendVoice: 'caption',
+    SendPaidMedia: 'caption',  # у элементов InputPaidMedia* своей подписи нет — только верхний уровень
+    CopyMessage: 'caption',
     EditMessageCaption: 'caption',
 }
 
@@ -88,6 +95,26 @@ def _chat_allowed(chat_id: Any) -> bool:
     return isinstance(chat_id, int) and chat_id in canary
 
 
+def _convert_media_item(bot: Bot, item: Any) -> Any:
+    """Конвертировать ОДИН InputMedia*: у него СВОЙ caption, caption_entities и parse_mode.
+
+    Общий кирпичик для обеих форм поля `media`: списка у `SendMediaGroup` и одиночного
+    объекта у `EditMessageMedia` (у самого метода parse_mode нет вовсе).
+    """
+    caption = getattr(item, 'caption', None)
+    if not isinstance(caption, str) or not caption:
+        return item
+    if getattr(item, 'caption_entities', None) is not None:
+        return item
+    if not _is_html(bot, getattr(item, 'parse_mode', None)):
+        return item
+
+    updated = substitute_custom_emoji(caption)
+    if updated == caption:
+        return item
+    return item.model_copy(update={'caption': updated})
+
+
 def _convert_button(button: Any) -> Any:
     """Перенести ведущий эмодзи лейбла в `icon_custom_emoji_id`. Кнопки не парсят HTML."""
     if getattr(button, 'icon_custom_emoji_id', None):
@@ -132,11 +159,10 @@ class CustomEmojiRequestMiddleware(BaseRequestMiddleware):
             return method
         if not _chat_allowed(getattr(method, 'chat_id', None)):
             return method
-        if isinstance(method, SendMediaGroup):
-            return self._transform_media_group(bot, method)
 
-        # Две НЕЗАВИСИМЫЕ ветки: текст/подпись живут под HTML-гейтом, кнопки — нет.
+        # НЕЗАВИСИМЫЕ ветки: текст/подпись и вложенная media живут под HTML-гейтом, кнопки — нет.
         updates: dict[str, Any] = self._text_update(bot, method)
+        updates.update(self._media_update(bot, method))
         markup = self._markup_update(method)
         if markup is not None:
             updates['reply_markup'] = markup
@@ -164,6 +190,23 @@ class CustomEmojiRequestMiddleware(BaseRequestMiddleware):
             return {}
         return {field: updated}
 
+    def _media_update(self, bot: Bot, method: TelegramMethod[TelegramType]) -> dict[str, Any]:
+        """Вложенная media: список у SendMediaGroup, одиночный объект у EditMessageMedia."""
+        if isinstance(method, SendMediaGroup):
+            changed = False
+            items: list[Any] = []
+            for item in method.media:
+                converted = _convert_media_item(bot, item)
+                changed = changed or converted is not item
+                items.append(converted)
+            return {'media': items} if changed else {}
+
+        if isinstance(method, EditMessageMedia):
+            converted = _convert_media_item(bot, method.media)
+            return {'media': converted} if converted is not method.media else {}
+
+        return {}
+
     def _markup_update(self, method: TelegramMethod[TelegramType]) -> Any:
         """Кнопочная ветка: любой метод с reply_markup, без оглядки на parse_mode и allowlist."""
         markup = getattr(method, 'reply_markup', None)
@@ -188,26 +231,3 @@ class CustomEmojiRequestMiddleware(BaseRequestMiddleware):
         if not changed:
             return None
         return markup.model_copy(update={rows_field: updated_rows})
-
-    def _transform_media_group(self, bot: Bot, method: SendMediaGroup) -> TelegramMethod[TelegramType]:
-        """У SendMediaGroup нет внешнего parse_mode: он свой у каждого элемента media."""
-        items: list[Any] = []
-        changed = False
-        for item in method.media:
-            caption = getattr(item, 'caption', None)
-            if (
-                isinstance(caption, str)
-                and caption
-                and getattr(item, 'caption_entities', None) is None
-                and _is_html(bot, getattr(item, 'parse_mode', None))
-            ):
-                updated = substitute_custom_emoji(caption)
-                if updated != caption:
-                    items.append(item.model_copy(update={'caption': updated}))
-                    changed = True
-                    continue
-            items.append(item)
-
-        if not changed:
-            return method
-        return method.model_copy(update={'media': items})
