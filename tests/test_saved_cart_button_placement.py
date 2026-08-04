@@ -21,6 +21,7 @@ import pytest
 
 from app.config import settings
 from app.localization.texts import get_texts
+from tests.fixtures.menu_layout_db import menu_layout_default_config
 
 
 LOCALE_DIR = Path(__file__).resolve().parents[1] / 'app' / 'localization' / 'locales'
@@ -47,37 +48,59 @@ def test_cart_ttl_is_fifteen_minutes():
 # --- 2. Главное меню ------------------------------------------------------
 
 
-def test_main_menu_renders_identically_with_and_without_saved_cart():
-    from app.keyboards.inline import get_main_menu_keyboard
+@pytest.mark.asyncio
+@pytest.mark.parametrize('menu_layout_enabled', [False, True], ids=['legacy', 'constructor'])
+async def test_main_menu_renders_identically_with_and_without_saved_cart(monkeypatch, menu_layout_enabled: bool):
+    """Сохранённая корзина не меняет главное меню ни на одной из двух веток шва."""
+    from app.keyboards import inline
 
-    with_cart = get_main_menu_keyboard(has_saved_cart=True)
-    without_cart = get_main_menu_keyboard(has_saved_cart=False)
+    monkeypatch.setattr(settings, 'MENU_LAYOUT_ENABLED', menu_layout_enabled)
+
+    with menu_layout_default_config() as db:
+        with_cart = await inline.get_main_menu_keyboard_async(db=db, has_saved_cart=True)
+        without_cart = await inline.get_main_menu_keyboard_async(db=db, has_saved_cart=False)
 
     assert _layout(with_cart) == _layout(without_cart)
     assert not (_callbacks(with_cart) & CART_CALLBACKS)
 
 
-def test_main_menu_ignores_show_resume_checkout_too():
-    from app.keyboards.inline import get_main_menu_keyboard
+@pytest.mark.asyncio
+@pytest.mark.parametrize('menu_layout_enabled', [False, True], ids=['legacy', 'constructor'])
+async def test_main_menu_ignores_show_resume_checkout_too(monkeypatch, menu_layout_enabled: bool):
+    """`show_resume_checkout=True` тоже не возвращает кнопку корзины в главное меню."""
+    from app.keyboards import inline
 
-    markup = get_main_menu_keyboard(show_resume_checkout=True)
+    monkeypatch.setattr(settings, 'MENU_LAYOUT_ENABLED', menu_layout_enabled)
+
+    with menu_layout_default_config() as db:
+        markup = await inline.get_main_menu_keyboard_async(db=db, show_resume_checkout=True)
 
     assert not (_callbacks(markup) & CART_CALLBACKS)
 
 
 @pytest.mark.asyncio
-async def test_async_main_menu_never_touches_redis(monkeypatch):
-    """Кнопки в меню нет — значит и запроса в Redis быть не должно."""
+@pytest.mark.parametrize('menu_layout_enabled', [False, True], ids=['legacy', 'constructor'])
+async def test_async_main_menu_never_touches_redis(monkeypatch, menu_layout_enabled: bool):
+    """Кнопки в меню нет — значит и запроса в Redis быть не должно.
+
+    Прогон идёт по ОБЕИМ веткам шва: `MENU_LAYOUT_ENABLED` переключается глобально,
+    и гарантия «рендер меню не стоит запроса в Redis» обязана держаться и у
+    хардкод-меню, и у конструктора. Раньше тест видел только ту ветку, что была
+    включена в конфиге, — поэтому включение флага его и сломало.
+    """
     from app.keyboards import inline
     from app.services.user_cart_service import user_cart_service
+
+    monkeypatch.setattr(settings, 'MENU_LAYOUT_ENABLED', menu_layout_enabled)
 
     spy = AsyncMock(return_value=True)
     monkeypatch.setattr(user_cart_service, 'has_user_cart', spy)
 
-    markup = await inline.get_main_menu_keyboard_async(
-        db=AsyncMock(),
-        user=SimpleNamespace(id=42, language='ru', username='u', created_at=None, promo_group_id=None),
-    )
+    with menu_layout_default_config() as db:
+        markup = await inline.get_main_menu_keyboard_async(
+            db=db,
+            user=SimpleNamespace(id=42, language='ru', username='u', created_at=None, promo_group_id=None),
+        )
 
     spy.assert_not_awaited()
     assert not (_callbacks(markup) & CART_CALLBACKS)

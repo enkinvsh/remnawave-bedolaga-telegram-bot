@@ -352,7 +352,7 @@ class Settings(BaseSettings):
     SIMPLE_SUBSCRIPTION_SQUAD_UUID: str | None = None
 
     # Настройки конструктора меню (API)
-    MENU_LAYOUT_ENABLED: bool = False  # Включить управление меню через API
+    MENU_LAYOUT_ENABLED: bool = True  # Меню бота собирается по раскладке из кабинета
 
     # Настройки мониторинга трафика
     TRAFFIC_MONITORING_ENABLED: bool = False  # Глобальный переключатель (для обратной совместимости)

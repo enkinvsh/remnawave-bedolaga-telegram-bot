@@ -48,40 +48,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from app.config import settings
 from app.keyboards.inline import get_main_menu_keyboard_async
 from app.services.menu_layout.service import MenuLayoutService
-
-
-# ---- Фейковая сессия -----------------------------------------------------------
-#
-# Прод не хранит строку `menu_layout_config`, поэтому конфигурация приходит из
-# `get_default_config()`. Пустое хранилище воспроизводит ровно это состояние.
-
-
-class _FakeResult:
-    def __init__(self, obj: Any) -> None:
-        self._obj = obj
-
-    def scalar_one_or_none(self) -> Any:
-        return self._obj
-
-
-class _FakeDB:
-    """Минимальная замена AsyncSession для `select(SystemSetting).where(key == ...)`."""
-
-    def __init__(self, store: dict[str, Any]) -> None:
-        self.store = store
-
-    async def execute(self, statement):
-        key = statement.whereclause.right.value
-        return _FakeResult(self.store.get(key))
-
-    def add(self, obj) -> None:
-        self.store[obj.key] = obj
-
-    async def flush(self) -> None:
-        """Фейковая сессия ничего не сбрасывает на диск."""
-
-    async def commit(self) -> None:
-        """Фейковая сессия ничего не коммитит."""
+from tests.fixtures.menu_layout_db import FakeSettingsStoreDB, menu_layout_default_config
 
 
 class _FakeSubscription:
@@ -116,9 +83,8 @@ class _FakeSubscription:
 @pytest.fixture
 def db() -> Any:
     """Пустое хранилище настроек + сброс классового кеша до и после теста."""
-    MenuLayoutService.invalidate_cache()
-    yield _FakeDB({})
-    MenuLayoutService.invalidate_cache()
+    with menu_layout_default_config() as fake_db:
+        yield fake_db
 
 
 # ---- Структурный снимок клавиатуры ---------------------------------------------
@@ -158,7 +124,12 @@ def _format(snapshot: list[list[ButtonSnapshot]]) -> str:
     return '\n'.join(lines)
 
 
-async def _assert_parity(db: _FakeDB, monkeypatch: pytest.MonkeyPatch, language: str, **kwargs: Any) -> None:
+async def _assert_parity(
+    db: FakeSettingsStoreDB,
+    monkeypatch: pytest.MonkeyPatch,
+    language: str,
+    **kwargs: Any,
+) -> None:
     """Отрендерить обе ветки с одинаковыми аргументами и сравнить структурно."""
     monkeypatch.setattr(settings, 'MENU_LAYOUT_ENABLED', False)
     MenuLayoutService.invalidate_cache()
