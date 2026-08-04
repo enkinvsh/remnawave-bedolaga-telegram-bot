@@ -71,6 +71,9 @@ PERMISSION_REGISTRY: dict[str, list[str]] = {
     'remnawave': ['read', 'sync', 'manage'],
     'traffic': ['read', 'export'],
     'settings': ['read', 'edit'],
+    # Отдельно от settings: раскладка меню бота видна каждому платящему
+    # пользователю, и право на неё выдаётся осознанно, а не «в нагрузку» к логотипу.
+    'bot_menu': ['read', 'edit'],
     'roles': ['read', 'create', 'edit', 'delete', 'assign'],
     'audit_log': ['read', 'export'],
     'channels': ['read', 'edit'],

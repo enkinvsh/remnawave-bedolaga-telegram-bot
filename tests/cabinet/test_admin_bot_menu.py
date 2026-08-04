@@ -20,13 +20,13 @@ from app.cabinet.routes.admin_bot_menu import (
     update_bot_menu_layout,
 )
 from app.services.menu_layout.constants import MENU_LAYOUT_CONFIG_KEY
-from app.services.menu_layout.service import MenuLayoutService
-from app.utils.menu_layout_cache import MENU_LAYOUT_KEY
-from app.webapi.schemas.menu_layout import (
+from app.services.menu_layout.schemas import (
     MenuButtonConfig,
     MenuLayoutUpdateRequest,
     MenuRowConfig,
 )
+from app.services.menu_layout.service import MenuLayoutService
+from app.utils.menu_layout_cache import MENU_LAYOUT_KEY
 
 
 BUILTIN_BUTTON_IDS = {
@@ -100,12 +100,26 @@ def store():
     MenuLayoutService.invalidate_cache()
 
 
+@pytest.fixture(autouse=True)
+def audit(monkeypatch):
+    """Перехват записи в админский журнал.
+
+    Фейковая сессия не умеет работать с ORM-моделью `AdminAuditLog`, а тестам
+    важен сам факт и содержимое вызова, а не строка в таблице.
+    """
+    from app.services.permission_service import PermissionService
+
+    recorder = AsyncMock()
+    monkeypatch.setattr(PermissionService, 'log_action', recorder)
+    return recorder
+
+
 def _db(store: dict) -> _FakeDB:
     return _FakeDB(store)
 
 
 def _admin():
-    return SimpleNamespace(telegram_id=468130024)
+    return SimpleNamespace(id=1, telegram_id=468130024)
 
 
 def _valid_payload() -> MenuLayoutUpdateRequest:
@@ -248,14 +262,74 @@ def test_every_bot_menu_route_is_permission_guarded():
         assert _required_permissions(route), f'{method} {path} без проверки прав'
 
 
-def test_bot_menu_read_and_write_permissions_match_neighbour_router():
+def test_bot_menu_uses_its_own_permission_not_settings():
+    """Меню бота — отдельное право: доступ к логотипу не должен давать доступ к меню."""
     from app.cabinet.routes import router
 
     read_route = _find_route(router, '/cabinet/admin/bot-menu', 'GET')
     write_route = _find_route(router, '/cabinet/admin/bot-menu', 'PUT')
+    reset_route = _find_route(router, '/cabinet/admin/bot-menu/reset', 'POST')
 
-    assert _required_permissions(read_route) == {'settings:read'}
-    assert _required_permissions(write_route) == {'settings:edit'}
+    assert _required_permissions(read_route) == {'bot_menu:read'}
+    assert _required_permissions(write_route) == {'bot_menu:edit'}
+    assert _required_permissions(reset_route) == {'bot_menu:edit'}
+
+
+def test_no_bot_menu_route_still_relies_on_settings_permission():
+    from app.cabinet.routes import router
+
+    for method, path in BOT_MENU_PATHS:
+        perms = _required_permissions(_find_route(router, path, method))
+        assert perms, f'{method} {path} без проверки прав'
+        assert all(perm.startswith('bot_menu:') for perm in perms), f'{method} {path} держится за {perms}'
+
+
+def test_bot_menu_permission_is_registered_in_the_catalogue():
+    """Без записи в реестре роль с этим правом нельзя было бы даже создать."""
+    from app.services.permission_service import PERMISSION_REGISTRY, get_all_permissions
+
+    assert PERMISSION_REGISTRY['bot_menu'] == ['read', 'edit']
+    assert {'bot_menu:read', 'bot_menu:edit'} <= set(get_all_permissions())
+
+
+def test_bot_menu_permission_is_granted_to_the_admin_preset_only():
+    """Право выдаётся осознанно: явно его получает только пресет Admin.
+
+    Admin (level=100) и так держит `users:*`, `payments:*`, `roles:*` — отказ именно в
+    меню бота ничего не защищал бы, зато требовал ручной выдачи в каждом тенанте.
+    Moderator / Marketer / Support права не получают, поэтому кастомная роль с одним
+    лишь `settings:edit` (дизайнер на брендинге) до меню бота по-прежнему не достаёт.
+    """
+    from app.services.permission_service import permission_matches
+    from app.services.rbac_bootstrap_service import _PRESET_ROLES
+
+    explicit = {
+        preset['name'] for preset in _PRESET_ROLES if any(perm.startswith('bot_menu') for perm in preset['permissions'])
+    }
+    assert explicit == {'Admin'}
+
+    reachable = {
+        preset['name']
+        for preset in _PRESET_ROLES
+        if any(permission_matches(perm, 'bot_menu:edit') for perm in preset['permissions'])
+    }
+    assert reachable == {'Superadmin', 'Admin'}
+
+
+@pytest.mark.parametrize(
+    ('held', 'allowed'),
+    [
+        ('settings:edit', False),
+        ('settings:*', False),
+        ('bot_menu:edit', True),
+        ('bot_menu:*', True),
+        ('*:*', True),
+    ],
+)
+def test_settings_edit_no_longer_reaches_the_bot_menu(held: str, allowed: bool):
+    from app.services.permission_service import permission_matches
+
+    assert permission_matches(held, 'bot_menu:edit') is allowed
 
 
 @pytest.mark.asyncio
@@ -278,6 +352,63 @@ async def test_bot_menu_rejects_caller_without_permission(monkeypatch):
         await guard(request=request, user=MagicMock(id=1), db=AsyncMock())
 
     assert error.value.status_code in (401, 403)
+
+
+# ---- 6a. PUT не пропускает враждебную ссылку ---------------------------------
+
+
+def _url_payload(action: str) -> MenuLayoutUpdateRequest:
+    return MenuLayoutUpdateRequest(
+        rows=[MenuRowConfig(id='row_links', buttons=['btn_link'], max_per_row=1)],
+        buttons={'btn_link': MenuButtonConfig(type='url', text={'ru': 'Ссылка'}, action=action)},
+    )
+
+
+@pytest.mark.parametrize('action', ['http://evil.com', 'javascript:alert(1)', 'https://user:pass@evil.com'])
+async def test_put_rejects_hostile_url_with_400_and_does_not_persist(store, action: str):
+    with pytest.raises(HTTPException) as error:
+        await update_bot_menu_layout(_url_payload(action), admin=_admin(), db=_db(store))
+
+    assert error.value.status_code == 400
+    assert any(item['field'] == 'buttons.btn_link.action' for item in error.value.detail['errors'])
+    assert MENU_LAYOUT_CONFIG_KEY not in store
+
+
+async def test_put_accepts_https_url(store):
+    result = await update_bot_menu_layout(_url_payload('https://dropweb.org'), admin=_admin(), db=_db(store))
+
+    assert result.buttons['btn_link'].action == 'https://dropweb.org'
+    assert MENU_LAYOUT_CONFIG_KEY in store
+
+
+# ---- 6b. Аудит изменения ------------------------------------------------------
+
+
+async def test_successful_put_is_written_to_the_audit_log(store, audit):
+    await update_bot_menu_layout(_url_payload('https://dropweb.org'), admin=_admin(), db=_db(store))
+
+    audit.assert_awaited_once()
+    kwargs = audit.await_args.kwargs
+    assert kwargs['user_id'] == 1
+    assert kwargs['action'] == 'bot_menu_update'
+    assert kwargs['resource_type'] == 'bot_menu'
+    assert kwargs['resource_id'] == MENU_LAYOUT_CONFIG_KEY
+    assert kwargs['details']['external_urls'] == ['https://dropweb.org']
+
+
+async def test_reset_is_written_to_the_audit_log(store, audit):
+    await reset_bot_menu_layout(admin=_admin(), db=_db(store))
+
+    audit.assert_awaited_once()
+    assert audit.await_args.kwargs['action'] == 'bot_menu_reset'
+    assert audit.await_args.kwargs['user_id'] == 1
+
+
+async def test_rejected_put_is_not_audited(store, audit):
+    with pytest.raises(HTTPException):
+        await update_bot_menu_layout(_url_payload('javascript:alert(1)'), admin=_admin(), db=_db(store))
+
+    audit.assert_not_awaited()
 
 
 # ---- 7. Две системы меню не пересекаются --------------------------------------

@@ -19,8 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
-from app.services.menu_layout_service import MenuContext, MenuLayoutService
-from app.webapi.schemas.menu_layout import (
+from app.services.menu_layout.schemas import (
     AvailableCallback,
     AvailableCallbacksResponse,
     BuiltinButtonInfo,
@@ -37,6 +36,8 @@ from app.webapi.schemas.menu_layout import (
     MenuPreviewRow,
     MenuRowConfig,
 )
+from app.services.menu_layout_service import MENU_LAYOUT_CONFIG_KEY, MenuContext, MenuLayoutService
+from app.services.permission_service import PermissionService
 
 from ..dependencies import get_cabinet_db, require_permission
 
@@ -102,6 +103,41 @@ def _build_config(payload: MenuLayoutUpdateRequest, current: dict) -> dict:
     return config
 
 
+def _external_urls(config: dict) -> list[str]:
+    """Собрать внешние ссылки раскладки — самая рискованная часть изменения.
+
+    Аудит должен позволять ответить «какие ссылки админ поставил в меню бота»,
+    не поднимая всю конфигурацию из истории.
+    """
+    urls: list[str] = []
+    for button in config.get('buttons', {}).values():
+        if not isinstance(button, dict):
+            continue
+        if button.get('type') in ('url', 'mini_app') and button.get('action'):
+            urls.append(button['action'])
+        if button.get('webapp_url'):
+            urls.append(button['webapp_url'])
+    return urls
+
+
+async def _audit(db: AsyncSession, admin: User, *, action: str, details: dict) -> None:
+    """Записать изменение меню бота в админский журнал (`admin_audit_log`).
+
+    `log_action` только делает flush, поэтому коммит нужен явно — так же, как в
+    соседних роутерах кабинета (см. `admin_channel_posts.py`).
+    """
+    await PermissionService.log_action(
+        db,
+        user_id=admin.id,
+        action=action,
+        resource_type='bot_menu',
+        resource_id=MENU_LAYOUT_CONFIG_KEY,
+        details=details,
+        status='success',
+    )
+    await db.commit()
+
+
 def _require_valid_config(config: dict) -> None:
     """Проверить конфигурацию сервисом и не дать сохранить мусор."""
     result = MenuLayoutService.validate_config(config)
@@ -117,7 +153,7 @@ def _require_valid_config(config: dict) -> None:
 
 @router.get('', response_model=MenuLayoutResponse)
 async def get_bot_menu_layout(
-    _admin: User = Depends(require_permission('settings:read')),
+    _admin: User = Depends(require_permission('bot_menu:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> MenuLayoutResponse:
     """Получить текущую конфигурацию меню бота."""
@@ -129,7 +165,7 @@ async def get_bot_menu_layout(
 @router.put('', response_model=MenuLayoutResponse)
 async def update_bot_menu_layout(
     payload: MenuLayoutUpdateRequest,
-    admin: User = Depends(require_permission('settings:edit')),
+    admin: User = Depends(require_permission('bot_menu:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> MenuLayoutResponse:
     """Сохранить конфигурацию меню бота целиком (после валидации)."""
@@ -141,6 +177,18 @@ async def update_bot_menu_layout(
     # save_config коммитит и сам инвалидирует кеш сервиса — бот подхватит без рестарта
     await MenuLayoutService.save_config(db, config)
     updated_at = await MenuLayoutService.get_config_updated_at(db)
+
+    await _audit(
+        db,
+        admin,
+        action='bot_menu_update',
+        details={
+            'rows_count': len(config.get('rows', [])),
+            'buttons_count': len(config.get('buttons', {})),
+            'row_ids': [row.get('id') for row in config.get('rows', [])],
+            'external_urls': _external_urls(config),
+        },
+    )
 
     logger.info(
         'Админ обновил меню бота из кабинета',
@@ -154,12 +202,14 @@ async def update_bot_menu_layout(
 
 @router.post('/reset', response_model=MenuLayoutResponse)
 async def reset_bot_menu_layout(
-    admin: User = Depends(require_permission('settings:edit')),
+    admin: User = Depends(require_permission('bot_menu:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> MenuLayoutResponse:
     """Сбросить конфигурацию меню бота к дефолтной."""
     config = await MenuLayoutService.reset_to_default(db)
     updated_at = await MenuLayoutService.get_config_updated_at(db)
+
+    await _audit(db, admin, action='bot_menu_reset', details={'rows_count': len(config.get('rows', []))})
 
     logger.info('Админ сбросил меню бота к дефолту', telegram_id=getattr(admin, 'telegram_id', None))
 
@@ -168,7 +218,7 @@ async def reset_bot_menu_layout(
 
 @router.get('/builtin-buttons', response_model=BuiltinButtonsListResponse)
 async def list_bot_menu_builtin_buttons(
-    _admin: User = Depends(require_permission('settings:read')),
+    _admin: User = Depends(require_permission('bot_menu:read')),
 ) -> BuiltinButtonsListResponse:
     """Получить каталог встроенных кнопок меню бота."""
     items = [
@@ -190,7 +240,7 @@ async def list_bot_menu_builtin_buttons(
 
 @router.get('/available-callbacks', response_model=AvailableCallbacksResponse)
 async def list_bot_menu_available_callbacks(
-    _admin: User = Depends(require_permission('settings:read')),
+    _admin: User = Depends(require_permission('bot_menu:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> AvailableCallbacksResponse:
     """Получить список доступных callback_data для кнопок меню бота."""
@@ -219,7 +269,7 @@ async def list_bot_menu_available_callbacks(
 
 @router.get('/placeholders', response_model=DynamicPlaceholdersResponse)
 async def list_bot_menu_placeholders(
-    _admin: User = Depends(require_permission('settings:read')),
+    _admin: User = Depends(require_permission('bot_menu:read')),
 ) -> DynamicPlaceholdersResponse:
     """Получить список динамических плейсхолдеров для текста кнопок."""
     items = [
@@ -238,7 +288,7 @@ async def list_bot_menu_placeholders(
 @router.post('/preview', response_model=MenuPreviewResponse)
 async def preview_bot_menu(
     payload: MenuPreviewRequest,
-    _admin: User = Depends(require_permission('settings:read')),
+    _admin: User = Depends(require_permission('bot_menu:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> MenuPreviewResponse:
     """Предпросмотр меню бота для указанного контекста пользователя."""

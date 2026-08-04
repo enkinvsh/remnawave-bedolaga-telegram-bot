@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import ipaddress
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final, Literal
+from urllib.parse import SplitResult, urlsplit
 
 import structlog
 from aiogram import types
@@ -32,6 +34,128 @@ from .stats_service import MenuLayoutStatsService
 
 
 logger = structlog.get_logger(__name__)
+
+
+# --- Защита внешних ссылок в кнопках меню -------------------------------------
+
+# Белого списка доменов сознательно НЕТ: владелец линкует свои сайты и каналы
+# поддержки, и список бы это ломал.
+_ALLOWED_URL_SCHEME: Final[str] = 'https'
+_TELEGRAM_DEEP_LINK_SCHEME: Final[str] = 'tg'
+
+# Куда именно уедет ссылка. Стоки принимают РАЗНЫЕ схемы, поэтому валидатор
+# обязан знать назначение и не может судить по одной строке.
+UrlSink = Literal['inline_url', 'web_app']
+
+
+def _validate_telegram_deep_link(url: str, parts: SplitResult) -> str | None:
+    """Проверить `tg://`-ссылку для `InlineKeyboardButton.url`.
+
+    Это НЕ веб-адрес: строку разбирает клиент Telegram, браузера в цепочке нет,
+    поэтому фишинга/XSS тут нет — единственный отказной режим это мёртвая кнопка.
+    `urlsplit('tg://user?id=5').hostname` == `'user'`, то есть «хост» здесь на
+    самом деле имя действия. Отсюда правила:
+
+    - обязательна форма `tg://` с непустым действием (Bot API документирует
+      именно её), поэтому `tg:settings`, `tg://` и `tg://?id=1` отклоняются;
+    - `@` перед действием не встречается ни в одном deep link — отклоняем как
+      заведомо битую форму;
+    - проверки «голый IP» и «домен обязателен» НЕ применяются: они бы судили
+      имя действия по правилам хоста и отклоняли валидный `tg://user?id=5`.
+
+    Списка разрешённых действий тоже нет: Telegram добавляет новые
+    (`tg://premium_offer`, `tg://addemoji`, ...), а захардкоженный перечень
+    сломал бы разом всех тенантов — ровно та причина, по которой нет и списка доменов.
+    """
+    if parts.username is not None or parts.password is not None:
+        return f'Ссылка tg:// не может содержать «@» перед действием, получено: {url!r}'
+
+    if not parts.netloc:
+        return f'Ссылка tg:// должна указывать действие, например tg://resolve?domain=name, получено: {url!r}'
+
+    return None
+
+
+def _validate_https_url(url: str, parts: SplitResult) -> str | None:
+    """Проверить веб-ссылку: хост непустой, не голый IP, без встроенных креды."""
+    if parts.username is not None or parts.password is not None:
+        return 'Ссылка не может содержать логин или пароль перед хостом'
+
+    hostname = parts.hostname
+    if not hostname:
+        return 'В ссылке отсутствует домен'
+
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        return None
+
+    return 'Ссылка должна вести на домен, а не на IP-адрес'
+
+
+def _validate_external_url(raw_url: str, sink: UrlSink) -> str | None:
+    """Проверить внешнюю ссылку кнопки. Вернуть текст ошибки или None, если всё чисто.
+
+    Кнопка меню бота видна каждому платящему пользователю, поэтому произвольная
+    ссылка здесь — готовая фишинговая площадка. Набор схем зависит от стока:
+
+    - `inline_url` (`type=url` → `InlineKeyboardButton.url`): `https://` или
+      `tg://`. Bot API описывает это поле как «HTTP or tg:// URL to be opened
+      when the button is pressed», и сам бот уже шлёт такие кнопки
+      (`app/keyboards/inline.py`). У `tg://user?id=<id>` https-аналога нет:
+      t.me требует username;
+    - `web_app` (`webapp_url` и `type=mini_app` → `WebAppInfo(url=...)`):
+      ТОЛЬКО `https://`. Bot API описывает `WebAppInfo.url` как «An HTTPS URL
+      of a Web App», так что `tg://` там дал бы неработающую кнопку.
+
+    `http://` отклоняется в обоих стоках (понижение шифрования), как и
+    `javascript:`, `data:`, `file:`, `vbscript:` и протокол-относительное `//host`.
+    """
+    url = (raw_url or '').strip()
+    if not url:
+        return 'Ссылка не может быть пустой'
+
+    try:
+        parts = urlsplit(url)
+        scheme = parts.scheme.lower()
+        # Свойства netloc парсятся лениво: битый порт или скобки IPv6 бросают
+        # ValueError именно здесь, а не в urlsplit — трогаем их под общим try.
+        _ = (parts.username, parts.password, parts.hostname)
+    except ValueError:
+        return 'Ссылка имеет некорректный формат'
+
+    if scheme == _ALLOWED_URL_SCHEME:
+        return _validate_https_url(url, parts)
+
+    if scheme == _TELEGRAM_DEEP_LINK_SCHEME and sink == 'inline_url':
+        return _validate_telegram_deep_link(url, parts)
+
+    if sink == 'inline_url':
+        return f'Разрешены только ссылки https:// и tg://, получено: {url!r}'
+
+    return f'Mini App открывается только по https://, получено: {url!r}'
+
+
+def _iter_button_urls(button_id: str, button: dict[str, Any]) -> list[tuple[str, str, UrlSink]]:
+    """Собрать тройки (поле, ссылка, сток) для каждой внешней ссылки кнопки.
+
+    Сток несёт намерение дальше, чтобы валидатор не восстанавливал тип кнопки
+    заново: `type=url` уедет в `InlineKeyboardButton.url`, а `type=mini_app` и
+    `webapp_url` — в `WebAppInfo(url=...)`, и схемы у них разные.
+    """
+    targets: list[tuple[str, str, UrlSink]] = []
+
+    button_type = button.get('type')
+    if button_type == 'url':
+        targets.append((f'buttons.{button_id}.action', button.get('action') or '', 'inline_url'))
+    elif button_type == 'mini_app':
+        targets.append((f'buttons.{button_id}.action', button.get('action') or '', 'web_app'))
+
+    webapp_url = button.get('webapp_url')
+    if webapp_url:
+        targets.append((f'buttons.{button_id}.webapp_url', webapp_url, 'web_app'))
+
+    return targets
 
 
 class MenuLayoutService:
@@ -193,6 +317,21 @@ class MenuLayoutService:
                         'severity': 'warning',
                     }
                 )
+
+        # Проверяем внешние ссылки кнопок (общий барьер для кабинета и webapi)
+        for button_id, button in buttons.items():
+            if not isinstance(button, dict):
+                continue
+            for field, url, sink in _iter_button_urls(button_id, button):
+                error_message = _validate_external_url(url, sink)
+                if error_message:
+                    errors.append(
+                        {
+                            'field': field,
+                            'message': error_message,
+                            'severity': 'error',
+                        }
+                    )
 
         # Проверяем отключенные кнопки
         disabled_count = sum(1 for btn in buttons.values() if not btn.get('enabled', True))

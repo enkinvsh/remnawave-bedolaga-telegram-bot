@@ -1,4 +1,9 @@
-"""Pydantic схемы для API конструктора меню."""
+"""Pydantic схемы конструктора меню — общий контракт для всех потребителей.
+
+Живут в домене (`app/services/menu_layout`), а не в `app/webapi/schemas`, чтобы
+кабинет (`app/cabinet/routes/admin_bot_menu.py`) не зависел от админского REST API.
+Оба роутера импортируют отсюда, поэтому контракт один и разъехаться не может.
+"""
 
 from __future__ import annotations
 

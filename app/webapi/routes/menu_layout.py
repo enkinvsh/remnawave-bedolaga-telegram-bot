@@ -10,16 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, Security, statu
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.services.menu_layout_service import (
-    MenuContext,
-    MenuLayoutService,
-)
-
-
-logger = structlog.get_logger(__name__)
-
-from ..dependencies import get_db_session, require_api_token
-from ..schemas.menu_layout import (
+from app.services.menu_layout.schemas import (
     AddCustomButtonRequest,
     AddRowRequest,
     AvailableCallback,
@@ -68,7 +59,15 @@ from ..schemas.menu_layout import (
     WeekdayStats,
     WeekdayStatsResponse,
 )
+from app.services.menu_layout_service import (
+    MenuContext,
+    MenuLayoutService,
+)
 
+from ..dependencies import get_db_session, require_api_token
+
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 

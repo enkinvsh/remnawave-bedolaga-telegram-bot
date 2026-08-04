@@ -168,6 +168,10 @@ _PRESET_ROLES: list[dict] = [
             'remnawave:*',
             'traffic:*',
             'settings:*',
+            # Меню бота — отдельное право (не входит в settings:*), но Admin level=100
+            # уже держит users:*, payments:* и roles:*. Отказ именно здесь ничего не
+            # защищал бы, зато требовал ручной выдачи в каждом тенанте.
+            'bot_menu:*',
             'roles:read',
             'roles:create',
             'roles:edit',
