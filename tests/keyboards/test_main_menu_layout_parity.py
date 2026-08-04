@@ -17,23 +17,27 @@
 `text` / `callback_data` / `url` / `web_app.url` / `icon_custom_emoji_id`.
 Перенос кнопки в соседний ряд — такое же расхождение, как её пропажа.
 
-ТЕКУЩИЙ СТАТУС: ПОДПИСИ СОВПАДАЮТ, СТРУКТУРА — ЕЩЁ НЕТ.
-Расхождение подписей закрыто: встроенные кнопки конструктора берут текст из слоя
-локализации по `text_key` (`app/services/menu_layout/constants.py`), поэтому
-сценарии, отличавшиеся ТОЛЬКО словами на кнопках, теперь проходят — включая локали
-fa/zh/ua, которым конфигурация раньше подсовывала английский.
+ТЕКУЩИЙ СТАТУС: ПАРИТЕТ ДОСТИГНУТ, `xfail` НЕ ОСТАЛОСЬ.
+Подписи берутся из слоя локализации по `text_key`
+(`app/services/menu_layout/constants.py`), а структура воспроизведена тем, что
+дефолтная конфигурация повторяет модель легаси-меню: три «прибитых» ряда
+(connect / happ / баланс) плюс ОДИН ряд-поток `main_row` со всеми остальными
+кнопками и `max_per_row=2`. `build_keyboard` режет по `max_per_row` уже видимые
+кнопки, поэтому пары «переплывают» при скрытии кнопки ровно как в легаси.
 
-Оставшиеся тесты помечены `xfail(strict=True)`, и в `reason` записано конкретное
-СТРУКТУРНОЕ расхождение: порядок рядов, пропажа «Докупить трафик» в режиме тарифов,
-воскресшая кнопка корзины, разная группировка кнопок по рядам, режим
-`MAIN_MENU_MODE=cabinet`, кнопка активации, мастер-переключатель конкурсов и
-игнорируемые `custom_buttons`. Это НЕ фиксация расхождения как правильного
-поведения: как только кто-то починит паритет, strict-xfail упадёт с XPASS и
-заставит снять маркер. До тех пор файл документирует, что флаг включать нельзя.
+Каждый тест здесь — утверждение о ПРОДЕ: включение флага не должно двигать ни одной
+кнопки ни у одного тенанта. Если тест упал, менять надо конструктор, а не тест:
+легаси-ветка тут по определению эталон, потому что это то, что люди видят сейчас.
 
 Граблю знать обязательно: `MenuLayoutService._cache` — КЛАССОВЫЙ глобал, поэтому
 фикстура инвалидирует его до и после каждого теста, иначе конфигурация протекает
 между тестами и результаты сравнения становятся ложными.
+
+ЧЕГО ЭТОТ ФАЙЛ НЕ ПОКРЫВАЕТ: `CONNECT_BUTTON_MODE`. Легаси рисует «Подключиться»
+по режиму подключения (`web_app` / `url` / callback), а конструктор — по
+`open_mode` кнопки, и на дефолте `open_mode='callback'` это расходится у
+подписчика с рабочей ссылкой. Менять это здесь нельзя: `open_mode='callback'`
+зафиксирован как «слать callback_data» в `tests/services/test_menu_layout_service.py`.
 """
 
 from typing import Any
@@ -81,17 +85,32 @@ class _FakeDB:
 
 
 class _FakeSubscription:
-    """Подписка ровно с теми атрибутами, которые читают обе ветки меню."""
+    """Подписка ровно с теми атрибутами, которые читают обе ветки меню.
 
-    def __init__(self, *, is_trial: bool = False, traffic_limit_gb: int = 0) -> None:
+    `subscription_url` по умолчанию ПУСТОЙ — это состояние «ссылки ещё нет», в
+    котором все режимы `CONNECT_BUTTON_MODE` сходятся на callback-кнопке. Именно
+    поэтому расхождение по форме «Подключиться» долго пряталось: подписчику с
+    рабочей ссылкой нужен явный `subscription_url` (см. `_SUBSCRIBER_WITH_LINK`).
+    """
+
+    def __init__(
+        self,
+        *,
+        is_trial: bool = False,
+        traffic_limit_gb: int = 0,
+        tariff_id: int | None = None,
+        subscription_url: str = '',
+        subscription_crypto_link: str = '',
+    ) -> None:
         self.is_trial = is_trial
         self.traffic_limit_gb = traffic_limit_gb
+        self.tariff_id = tariff_id
         self.traffic_used_gb = 0.0
         self.days_left = 30
         self.autopay_enabled = False
         self.is_active = True
-        self.subscription_url = ''
-        self.subscription_crypto_link = ''
+        self.subscription_url = subscription_url
+        self.subscription_crypto_link = subscription_crypto_link
 
 
 @pytest.fixture
@@ -158,13 +177,9 @@ async def _assert_parity(db: _FakeDB, monkeypatch: pytest.MonkeyPatch, language:
 
 # ---- Матрица сценариев ---------------------------------------------------------
 #
-# Сценарии подобраны так, чтобы менялся НАБОР показываемых кнопок. `reason` у
-# каждого — конкретное расхождение, снятое с реального рендера обеих веток.
-
-_ROW_SWAP = (
-    'ряд «Баланс» переезжает с позиции 1 на позицию 2 — конструктор ставит '
-    'ряд «Подписка» ПЕРЕД балансом, текущее меню — ПОСЛЕ'
-)
+# Сценарии подобраны так, чтобы менялся НАБОР показываемых кнопок: именно смена
+# набора вскрывает разницу в группировке, потому что в легаси-меню спрятанная
+# кнопка не оставляет дыру, а подтягивает следующую.
 
 SCENARIOS = [
     pytest.param('ru', {}, id='new_user-ru'),
@@ -177,16 +192,6 @@ SCENARIOS = [
             'subscription': _FakeSubscription(is_trial=True),
         },
         id='active_trial-ru',
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason=(
-                f'Активный триал, ru: {_ROW_SWAP}; кроме того текущее меню сплющивает '
-                'остаток кнопок в общий поток по 2 и даёт пары '
-                '[Подписка, Промокод] / [Партнерка, Техподдержка] / [Инфо, Язык], '
-                'а конструктор держит семантические ряды '
-                '[Подписка] / [Промокод, Партнерка] / [Техподдержка, Инфо] / [Язык]'
-            ),
-        ),
     ),
     pytest.param(
         'ru',
@@ -197,15 +202,6 @@ SCENARIOS = [
             'subscription': _FakeSubscription(traffic_limit_gb=100),
         },
         id='active_paid-ru',
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason=(
-                f'Активная платная подписка, ru: {_ROW_SWAP}; при SALES_MODE=tariffs '
-                "конструктор ВООБЩЕ не показывает '📈 Докупить трафик' (условие "
-                'traffic_topup_enabled жёстко запрещает докупку в режиме тарифов), '
-                'а текущее меню её показывает'
-            ),
-        ),
     ),
     pytest.param(
         'en',
@@ -216,41 +212,47 @@ SCENARIOS = [
             'subscription': _FakeSubscription(traffic_limit_gb=100),
         },
         id='active_paid-en',
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason=(f"Активная платная подписка, en: {_ROW_SWAP}; '📈 Buy more traffic' пропадает в режиме тарифов"),
-        ),
     ),
     pytest.param(
         'ru',
-        {'has_had_paid_subscription': True},
-        id='expired_paid-ru',
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason=(
-                'Истёкшая подписка (платил раньше), ru: текущее меню склеивает '
-                '[Купить подписку, Промокод] / [Партнерка, Техподдержка] / [Инфо, Язык], '
-                'конструктор даёт [Купить подписку] / [Промокод, Партнерка] / '
-                '[Техподдержка, Инфо] / [Язык]'
-            ),
-        ),
+        {
+            'has_active_subscription': True,
+            'subscription_is_active': True,
+            'has_had_paid_subscription': True,
+            'subscription': _FakeSubscription(traffic_limit_gb=100, tariff_id=7),
+        },
+        id='active_paid_with_tariff-ru',
     ),
+    pytest.param(
+        'ru',
+        {
+            'has_active_subscription': True,
+            'subscription_is_active': True,
+            'has_had_paid_subscription': True,
+            'subscription': _FakeSubscription(traffic_limit_gb=0),
+        },
+        id='active_paid_unlimited-ru',
+    ),
+    pytest.param(
+        'ru',
+        {
+            'has_active_subscription': True,
+            'subscription_is_active': False,
+            'has_had_paid_subscription': True,
+            'subscription': _FakeSubscription(traffic_limit_gb=100),
+        },
+        id='subscription_suspended-ru',
+    ),
+    pytest.param('ru', {'has_had_paid_subscription': True}, id='expired_paid-ru'),
+    # Ненулевой баланс — единственный случай, когда легаси берёт `BALANCE_BUTTON`
+    # вместо `BALANCE_BUTTON_DEFAULT`, поэтому проверяется и вне ru.
     pytest.param('ru', {'balance_kopeks': 150000}, id='balance_positive-ru'),
-    pytest.param(
-        'ru',
-        {'has_saved_cart': True, 'show_resume_checkout': True},
-        id='saved_cart-ru',
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason=(
-                'Сохранённая корзина, ru: конструктор ВОЗВРАЩАЕТ в главное меню кнопку '
-                "'↩️ Вернуться к оформлению' -> return_to_saved_cart, которую из главного "
-                'меню намеренно убрали и перенесли на экран «Баланс»'
-            ),
-        ),
-    ),
+    pytest.param('en', {'balance_kopeks': 150000}, id='balance_positive-en'),
+    pytest.param('fa', {'balance_kopeks': 150000}, id='balance_positive-fa'),
+    pytest.param('ru', {'has_saved_cart': True, 'show_resume_checkout': True}, id='saved_cart-ru'),
     pytest.param('ru', {'is_admin': True}, id='admin-ru'),
     pytest.param('ru', {'is_moderator': True}, id='moderator-ru'),
+    pytest.param('ru', {'is_admin': True, 'is_moderator': True}, id='admin_and_moderator-ru'),
 ]
 
 
@@ -260,31 +262,14 @@ async def test_main_menu_parity(db, monkeypatch, language: str, kwargs: dict[str
     await _assert_parity(db, monkeypatch, language, **kwargs)
 
 
-# ---- Расхождения, которые не видны на дефолтных настройках ----------------------
-#
-# Ниже — классы расхождений, зависящие от настроек тенанта. На дефолтах они не
-# всплывают, но white-label клиенты с такими настройками существуют, и флип
-# ударит по ним молча. Тоже xfail(strict=True): тест утверждает ЖЕЛАЕМОЕ
-# поведение (паритет), а не фиксирует поломку.
-
-
 @pytest.mark.parametrize('language', ['fa', 'zh', 'ua'])
 async def test_main_menu_parity_for_non_ru_en_locales(db, monkeypatch, language: str) -> None:
     """Локали без словаря в конфигурации не должны молча становиться английскими."""
     await _assert_parity(db, monkeypatch, language)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        'MenuLayoutService.build_keyboard игнорирует context.custom_buttons: '
-        'кнопки, переданные вызывающим в custom_buttons, при включённом флаге '
-        'исчезают из меню (сейчас ни один прод-вызов их не передаёт, поэтому '
-        'расхождение спящее, но параметр в сигнатуре остаётся и обманывает)'
-    ),
-)
 async def test_main_menu_parity_keeps_custom_buttons(db, monkeypatch) -> None:
-    """Кнопки из параметра custom_buttons обязаны доезжать до клавиатуры."""
+    """Кнопки из параметра custom_buttons обязаны доезжать до клавиатуры и на своё место."""
     await _assert_parity(
         db,
         monkeypatch,
@@ -293,60 +278,135 @@ async def test_main_menu_parity_keeps_custom_buttons(db, monkeypatch) -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        'get_main_menu_keyboard_async проверяет MENU_LAYOUT_ENABLED ДО делегирования '
-        'в get_main_menu_keyboard, а ветку MAIN_MENU_MODE=cabinet обрабатывает только '
-        'синхронная версия. При включённом флаге кабинетное меню пропадает целиком: '
-        "кнопки '👤 Личный кабинет' не будет, вместо неё нарисуется обычное меню"
+# ---- Оси настроек тенанта ------------------------------------------------------
+#
+# Продукт white-label: флаг переключается разом у всех тенантов, а настройки у них
+# РАЗНЫЕ. Дефолты этого развёртывания ничего не доказывают про чужое, поэтому
+# каждая настройка, влияющая на набор кнопок, проверяется в обоих положениях.
+# `_FakeSubscription.subscription_url` пустой, поэтому CONNECT_BUTTON_MODE тут не
+# участвует: все режимы подключения без ссылки сходятся на callback-кнопке.
+
+_SUBSCRIBER_WITH_TRAFFIC = {
+    'has_active_subscription': True,
+    'subscription_is_active': True,
+    'has_had_paid_subscription': True,
+    'subscription': _FakeSubscription(traffic_limit_gb=100),
+}
+
+# Подписчик с РАБОЧЕЙ ссылкой: только на нём видно форму кнопки «Подключиться».
+_SUBSCRIPTION_URL = 'https://panel.example.com/sub/abcdef'
+_CRYPTO_LINK = 'happ://crypto/abcdef'
+_CUSTOM_MINIAPP_URL = 'https://miniapp.example.com/app'
+
+_SUBSCRIBER_WITH_LINK = {
+    'has_active_subscription': True,
+    'subscription_is_active': True,
+    'has_had_paid_subscription': True,
+    'subscription': _FakeSubscription(
+        traffic_limit_gb=100,
+        subscription_url=_SUBSCRIPTION_URL,
+        subscription_crypto_link=_CRYPTO_LINK,
     ),
-)
-async def test_main_menu_parity_in_cabinet_mode(db, monkeypatch) -> None:
-    """Режим MAIN_MENU_MODE=cabinet не должен обходиться конструктором стороной."""
-    monkeypatch.setattr(settings, 'MAIN_MENU_MODE', 'cabinet')
-    await _assert_parity(db, monkeypatch, 'ru')
+}
 
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        'DEFAULT_MENU_CONFIG вообще не содержит кнопку активации: при '
-        'ACTIVATE_BUTTON_VISIBLE=True текущее меню рисует ACTIVATE_BUTTON_TEXT -> '
-        'activate_button, а конструктор — нет, кнопка молча пропадает'
+SETTINGS_AXES = [
+    pytest.param({'MAIN_MENU_MODE': 'cabinet'}, {}, id='cabinet_mode'),
+    pytest.param({'MAIN_MENU_MODE': 'cabinet'}, {'is_admin': True}, id='cabinet_mode-admin'),
+    pytest.param({'ACTIVATE_BUTTON_VISIBLE': True}, {}, id='activate_button_on'),
+    pytest.param(
+        {'ACTIVATE_BUTTON_VISIBLE': True, 'ACTIVATE_BUTTON_TEXT': '🔑 Ввести ключ'},
+        {},
+        id='activate_button_custom_text',
     ),
-)
-async def test_main_menu_parity_keeps_activate_button(db, monkeypatch) -> None:
-    """Кнопка активации, включённая настройкой, не должна исчезать при флипе."""
-    monkeypatch.setattr(settings, 'ACTIVATE_BUTTON_VISIBLE', True)
-    await _assert_parity(db, monkeypatch, 'ru')
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        'Условие contests_visible в конструкторе смотрит только на '
-        'CONTESTS_BUTTON_VISIBLE, а текущее меню требует ещё и CONTESTS_ENABLED: '
-        "у тенанта с выключенными конкурсами кнопка '🎲 Конкурсы' -> contests_menu "
-        'ПОЯВИТСЯ после флипа'
+    pytest.param({'ACTIVATE_BUTTON_VISIBLE': False}, {}, id='activate_button_off'),
+    pytest.param({'CONTESTS_ENABLED': False, 'CONTESTS_BUTTON_VISIBLE': True}, {}, id='contests_master_switch_off'),
+    pytest.param({'CONTESTS_ENABLED': True, 'CONTESTS_BUTTON_VISIBLE': True}, {}, id='contests_on'),
+    pytest.param({'CONTESTS_ENABLED': True, 'CONTESTS_BUTTON_VISIBLE': False}, {}, id='contests_button_hidden'),
+    pytest.param({'SIMPLE_SUBSCRIPTION_ENABLED': True}, {}, id='simple_subscription_on'),
+    pytest.param(
+        {'SIMPLE_SUBSCRIPTION_ENABLED': True},
+        _SUBSCRIBER_WITH_TRAFFIC,
+        id='simple_subscription_on-subscriber',
     ),
-)
-async def test_main_menu_parity_respects_contests_master_switch(db, monkeypatch) -> None:
-    """Кнопка конкурсов не должна появляться при выключенных конкурсах."""
-    monkeypatch.setattr(settings, 'CONTESTS_ENABLED', False)
-    monkeypatch.setattr(settings, 'CONTESTS_BUTTON_VISIBLE', True)
-    await _assert_parity(db, monkeypatch, 'ru')
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        'Простая покупка: текущее меню кладёт кнопку в общий поток по 2 в паре с '
-        'промокодом, конструктор выносит её в отдельный ряд max_per_row=1 и сдвигает '
-        'этим все следующие пары'
+    pytest.param({'SALES_MODE': 'classic'}, _SUBSCRIBER_WITH_TRAFFIC, id='classic_mode-subscriber'),
+    pytest.param({'SALES_MODE': 'tariffs'}, _SUBSCRIBER_WITH_TRAFFIC, id='tariffs_mode-subscriber'),
+    pytest.param(
+        {'SALES_MODE': 'classic', 'TRAFFIC_TOPUP_ENABLED': False},
+        _SUBSCRIBER_WITH_TRAFFIC,
+        id='traffic_topup_disabled',
     ),
-)
-async def test_main_menu_parity_with_simple_subscription(db, monkeypatch) -> None:
-    """Кнопка простой покупки должна остаться на своём месте и со своей подписью."""
-    monkeypatch.setattr(settings, 'SIMPLE_SUBSCRIPTION_ENABLED', True)
-    await _assert_parity(db, monkeypatch, 'ru')
+    pytest.param(
+        {'SALES_MODE': 'classic', 'TRAFFIC_SELECTION_MODE': 'fixed'},
+        _SUBSCRIBER_WITH_TRAFFIC,
+        id='traffic_topup_blocked',
+    ),
+    pytest.param({'BUY_TRAFFIC_BUTTON_VISIBLE': False}, _SUBSCRIBER_WITH_TRAFFIC, id='buy_traffic_button_hidden'),
+    pytest.param({'TRIAL_DURATION_DAYS': 0}, {}, id='trial_disabled_by_duration'),
+    pytest.param({'TRIAL_DISABLED_FOR': 'all'}, {}, id='trial_disabled_for_all'),
+    pytest.param({'REFERRAL_PROGRAM_ENABLED': False}, {}, id='referrals_off'),
+    pytest.param({'SUPPORT_MENU_ENABLED': False}, {}, id='support_off'),
+    pytest.param({'LANGUAGE_SELECTION_ENABLED': False}, {}, id='language_selection_off'),
+    pytest.param(
+        {'CONNECT_BUTTON_MODE': 'happ_cryptolink', 'CONNECT_BUTTON_HAPP_DOWNLOAD_ENABLED': True},
+        _SUBSCRIBER_WITH_TRAFFIC,
+        id='happ_download_row',
+    ),
+    # --- CONNECT_BUTTON_MODE: форма главной кнопки бота ---
+    #
+    # Проверяется у подписчика С РАБОЧЕЙ ССЫЛКОЙ: без неё все режимы сходятся на
+    # callback и расхождение не видно. `_assert_parity` сравнивает web_app.url /
+    # url / callback_data, поэтому подмена Mini App на callback здесь падает.
+    pytest.param({'CONNECT_BUTTON_MODE': 'miniapp_subscription'}, _SUBSCRIBER_WITH_LINK, id='connect-miniapp_sub'),
+    pytest.param({'CONNECT_BUTTON_MODE': 'link'}, _SUBSCRIBER_WITH_LINK, id='connect-link'),
+    pytest.param(
+        {'CONNECT_BUTTON_MODE': 'miniapp_custom', 'MINIAPP_CUSTOM_URL': _CUSTOM_MINIAPP_URL},
+        _SUBSCRIBER_WITH_LINK,
+        id='connect-miniapp_custom',
+    ),
+    pytest.param(
+        {'CONNECT_BUTTON_MODE': 'happ_cryptolink'},
+        _SUBSCRIBER_WITH_LINK,
+        id='connect-happ_cryptolink',
+    ),
+    pytest.param(
+        {'CONNECT_BUTTON_MODE': 'happ_cryptolink', 'MULTI_TARIFF_ENABLED': True, 'SALES_MODE': 'tariffs'},
+        _SUBSCRIBER_WITH_LINK,
+        id='connect-happ_cryptolink-multi_tariff',
+    ),
+    pytest.param({'CONNECT_BUTTON_MODE': 'miniapp_subscription'}, _SUBSCRIBER_WITH_TRAFFIC, id='connect-sub-fallback'),
+    pytest.param({'CONNECT_BUTTON_MODE': 'link'}, _SUBSCRIBER_WITH_TRAFFIC, id='connect-link-fallback'),
+    pytest.param(
+        {'CONNECT_BUTTON_MODE': 'miniapp_custom', 'MINIAPP_CUSTOM_URL': _CUSTOM_MINIAPP_URL},
+        _SUBSCRIBER_WITH_TRAFFIC,
+        id='connect-miniapp_custom-without-link',
+    ),
+    pytest.param({'CONNECT_BUTTON_MODE': 'totally_unknown'}, _SUBSCRIBER_WITH_LINK, id='connect-unknown-mode'),
+    # --- Мультитариф: подпись кнопки подписки ---
+    pytest.param(
+        {'MULTI_TARIFF_ENABLED': True, 'SALES_MODE': 'tariffs'},
+        _SUBSCRIBER_WITH_LINK,
+        id='multi_tariff-subscriber',
+    ),
+    pytest.param({'MULTI_TARIFF_ENABLED': True, 'SALES_MODE': 'tariffs'}, {}, id='multi_tariff-new_user'),
+]
+
+
+@pytest.mark.parametrize('language', ['ru', 'fa'])
+@pytest.mark.parametrize(('overrides', 'kwargs'), SETTINGS_AXES)
+async def test_main_menu_parity_across_settings(
+    db,
+    monkeypatch,
+    overrides: dict[str, Any],
+    kwargs: dict[str, Any],
+    language: str,
+) -> None:
+    """Паритет обязан держаться при любых настройках тенанта, а не только на дефолтных.
+
+    Прогон идёт и на `fa`: подписи легаси берёт то атрибутом (`texts.MENU_TRIAL`), то
+    методом (`texts.t(...)` с литеральным дефолтом), а конструктор — всегда
+    `texts.get(text_key)`. Ключ, которого нет в локали, эти пути разводят, и увидеть
+    это можно только на языке помимо ru/en.
+    """
+    for name, value in overrides.items():
+        monkeypatch.setattr(settings, name, value)
+    await _assert_parity(db, monkeypatch, language, **kwargs)

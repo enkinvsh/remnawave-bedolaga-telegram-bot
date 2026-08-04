@@ -14,6 +14,25 @@
 локализации: `resume_checkout` (из главного меню убрана и живёт на экране
 «Баланс») и `moderator_panel` (легаси хардкодит '🧑‍⚖️ Модерация' строкой).
 Ключ им не выдуман: подпись остаётся литеральной, как у кастомных кнопок.
+Отдельный случай — `activate`: её подпись живёт не в локалях, а в НАСТРОЙКЕ бота
+`ACTIVATE_BUTTON_TEXT`, поэтому `text` у неё тоже пустой, а значение подставляет
+`MenuLayoutService._resolve_button_text` (см. `_SETTINGS_TEXT_BUILTINS`).
+
+РАСКЛАДКА ПО УМОЛЧАНИЮ ОБЯЗАНА СОВПАДАТЬ С ЛЕГАСИ-МЕНЮ ПОБАЙТОВО.
+`get_main_menu_keyboard` кладёт в клавиатуру ровно три «прибитых» ряда — connect,
+happ и баланс — а ВСЕ остальные кнопки сливает в ОДИН поток `paired_buttons` и
+режет его по 2. Из-за этого пары «плывут»: спрятанная кнопка не оставляет дыру, а
+подтягивает следующую. Семантические ряды (по одному на смысловую пару) такое
+воспроизвести не могут в принципе, поэтому здесь тот же самый поток — одна строка
+`main_row` со всеми непривязанными кнопками и `max_per_row=2`. `build_keyboard`
+режет по `max_per_row` уже ВИДИМЫЕ кнопки строки, так что переток получается сам.
+Строка остаётся обычной `MenuRowConfig`: админ видит её в конструкторе и может
+вытащить любую кнопку в собственный ряд — но это будет его осознанное решение, а
+не побочный эффект включения флага.
+
+Условия, которые раньше висели на однокнопочных рядах (`simple_subscription_enabled`,
+`contests_visible`, `language_selection_enabled`), переехали на сами кнопки: ряд
+теперь общий, и условие на нём спрятало бы весь поток.
 """
 
 from typing import Any
@@ -21,6 +40,13 @@ from typing import Any
 
 # Ключ для хранения конфигурации в SystemSetting
 MENU_LAYOUT_CONFIG_KEY = 'menu_layout_config'
+
+# Псевдо-кнопка: место в потоке, куда `build_keyboard` вставляет кнопки, переданные
+# вызывающим в `MenuContext.custom_buttons`. Своей подписи и действия у неё нет —
+# она разворачивается в ноль или больше готовых `InlineKeyboardButton`. В легаси-меню
+# эти кнопки попадают в поток между «простой подпиской» и промокодом, поэтому место
+# в раскладке значимо и должно быть перемещаемым, а не захардкоженным.
+CUSTOM_BUTTONS_SLOT_ID = 'custom_buttons'
 
 # Дефолтная конфигурация меню
 DEFAULT_MENU_CONFIG: dict[str, Any] = {
@@ -35,14 +61,12 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         {
             'id': 'happ_row',
             'buttons': ['happ_download'],
-            'conditions': {'has_active_subscription': True, 'happ_enabled': True},
+            'conditions': {
+                'has_active_subscription': True,
+                'subscription_is_active': True,
+                'happ_enabled': True,
+            },
             'max_per_row': 1,
-        },
-        {
-            'id': 'subscription_traffic_row',
-            'buttons': ['subscription', 'buy_traffic'],
-            'conditions': {'has_active_subscription': True},
-            'max_per_row': 2,
         },
         {
             'id': 'balance_row',
@@ -51,45 +75,25 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'max_per_row': 1,
         },
         {
-            'id': 'trial_buy_row',
-            'buttons': ['trial', 'buy_subscription'],
+            # Общий поток легаси-меню: порядок кнопок здесь — это порядок, в котором
+            # `get_main_menu_keyboard` наполняет `paired_buttons`.
+            'id': 'main_row',
+            'buttons': [
+                'subscription',
+                'buy_traffic',
+                'trial',
+                'buy_subscription',
+                'simple_subscription',
+                CUSTOM_BUTTONS_SLOT_ID,
+                'promocode',
+                'referrals',
+                'contests',
+                'support',
+                'activate',
+                'info',
+                'language',
+            ],
             'conditions': None,
-            'max_per_row': 2,
-        },
-        {
-            'id': 'simple_subscription_row',
-            'buttons': ['simple_subscription'],
-            'conditions': {'simple_subscription_enabled': True},
-            'max_per_row': 1,
-        },
-        {
-            'id': 'resume_row',
-            'buttons': ['resume_checkout'],
-            'conditions': {'has_saved_cart': True},
-            'max_per_row': 1,
-        },
-        {
-            'id': 'promo_referral_row',
-            'buttons': ['promocode', 'referrals'],
-            'conditions': None,
-            'max_per_row': 2,
-        },
-        {
-            'id': 'contests_row',
-            'buttons': ['contests'],
-            'conditions': {'contests_visible': True},
-            'max_per_row': 2,
-        },
-        {
-            'id': 'support_info_row',
-            'buttons': ['support', 'info'],
-            'conditions': None,
-            'max_per_row': 2,
-        },
-        {
-            'id': 'language_row',
-            'buttons': ['language'],
-            'conditions': {'language_selection_enabled': True},
             'max_per_row': 2,
         },
         {
@@ -193,6 +197,17 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'action': 'simple_subscription_purchase',
             'enabled': True,
             'visibility': 'all',
+            'conditions': {'simple_subscription_enabled': True},
+            'dynamic_text': False,
+        },
+        CUSTOM_BUTTONS_SLOT_ID: {
+            'type': 'builtin',
+            'builtin_id': CUSTOM_BUTTONS_SLOT_ID,
+            'text': {},
+            'text_key': None,
+            'action': '',
+            'enabled': True,
+            'visibility': 'all',
             'conditions': None,
             'dynamic_text': False,
         },
@@ -238,7 +253,7 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'action': 'contests_menu',
             'enabled': True,
             'visibility': 'all',
-            'conditions': None,
+            'conditions': {'contests_visible': True},
             'dynamic_text': False,
         },
         'support': {
@@ -250,6 +265,18 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'enabled': True,
             'visibility': 'all',
             'conditions': {'support_enabled': True},
+            'dynamic_text': False,
+        },
+        'activate': {
+            'type': 'builtin',
+            'builtin_id': 'activate',
+            # Подпись живёт в настройке бота ACTIVATE_BUTTON_TEXT, а не в локалях.
+            'text': {},
+            'text_key': None,
+            'action': 'activate_button',
+            'enabled': True,
+            'visibility': 'all',
+            'conditions': {'activate_button_visible': True},
             'dynamic_text': False,
         },
         'info': {
@@ -271,7 +298,7 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
             'action': 'menu_language',
             'enabled': True,
             'visibility': 'all',
-            'conditions': None,
+            'conditions': {'language_selection_enabled': True},
             'dynamic_text': False,
         },
         'admin_panel': {
@@ -368,6 +395,16 @@ BUILTIN_BUTTONS_INFO: list[dict[str, Any]] = [
         'supports_dynamic_text': False,
     },
     {
+        'id': CUSTOM_BUTTONS_SLOT_ID,
+        'default_text': {
+            'ru': '⟨кнопки, переданные ботом⟩',
+            'en': '⟨buttons passed by the bot⟩',
+        },
+        'callback_data': '',
+        'default_conditions': None,
+        'supports_dynamic_text': False,
+    },
+    {
         'id': 'promocode',
         'default_text': {'ru': '🎟️ Промокод', 'en': '🎟️ Promo code'},
         'callback_data': 'menu_promocode',
@@ -393,6 +430,13 @@ BUILTIN_BUTTONS_INFO: list[dict[str, Any]] = [
         'default_text': {'ru': '💬 Поддержка', 'en': '💬 Support'},
         'callback_data': 'menu_support',
         'default_conditions': {'support_enabled': True},
+        'supports_dynamic_text': False,
+    },
+    {
+        'id': 'activate',
+        'default_text': {'ru': 'активировать', 'en': 'activate'},
+        'callback_data': 'activate_button',
+        'default_conditions': {'activate_button_visible': True},
         'supports_dynamic_text': False,
     },
     {

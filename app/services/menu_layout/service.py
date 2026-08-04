@@ -20,10 +20,12 @@ from app.config import settings
 from app.database.crud.system_setting import upsert_system_setting
 from app.database.models import SystemSetting
 from app.localization.texts import get_texts
+from app.utils.miniapp_buttons import build_main_menu_connect_button
 
 from .constants import (
     AVAILABLE_CALLBACKS,
     BUILTIN_BUTTONS_INFO,
+    CUSTOM_BUTTONS_SLOT_ID,
     DEFAULT_MENU_CONFIG,
     DYNAMIC_PLACEHOLDERS,
     MENU_LAYOUT_CONFIG_KEY,
@@ -841,6 +843,21 @@ class MenuLayoutService:
     # --- Проверка условий ---
 
     @classmethod
+    def _is_traffic_topup_available(cls, context: MenuContext) -> bool:
+        """Доступна ли докупка трафика — правило один в один из легаси-меню.
+
+        `get_main_menu_keyboard` в режиме тарифов НЕ запрещает докупку: он лишь
+        перекладывает детальную проверку на хендлер, если у подписки есть `tariff_id`,
+        и иначе падает на общие настройки. Раньше здесь стоял безусловный запрет для
+        режима тарифов, и кнопка пропадала у всех тарифных подписчиков.
+        """
+        if settings.is_tariffs_mode() and getattr(context.subscription, 'tariff_id', None):
+            return settings.BUY_TRAFFIC_BUTTON_VISIBLE
+        if settings.is_traffic_topup_enabled() and not settings.is_traffic_topup_blocked():
+            return settings.BUY_TRAFFIC_BUTTON_VISIBLE
+        return False
+
+    @classmethod
     def _evaluate_conditions(
         cls,
         conditions: dict[str, Any] | None,
@@ -869,12 +886,9 @@ class MenuLayoutService:
             if is_trial or traffic_limit <= 0:
                 return False
 
-        # traffic_topup_enabled - функция докупки трафика включена
+        # traffic_topup_enabled - докупка трафика доступна
         if conditions.get('traffic_topup_enabled') is True:
-            if not settings.is_traffic_topup_enabled():
-                return False
-            # В режиме тарифов докупка трафика недоступна
-            if settings.is_tariffs_mode():
+            if not cls._is_traffic_topup_available(context):
                 return False
 
         # is_admin
@@ -894,9 +908,14 @@ class MenuLayoutService:
             if not settings.is_referral_program_enabled():
                 return False
 
-        # contests_visible
+        # contests_visible - конкурсы включены И кнопка разрешена
         if conditions.get('contests_visible') is True:
-            if not settings.CONTESTS_BUTTON_VISIBLE:
+            if not (settings.CONTESTS_ENABLED and settings.CONTESTS_BUTTON_VISIBLE):
+                return False
+
+        # activate_button_visible
+        if conditions.get('activate_button_visible') is True:
+            if not settings.ACTIVATE_BUTTON_VISIBLE:
                 return False
 
         # support_enabled
@@ -1086,6 +1105,28 @@ class MenuLayoutService:
             return next(iter(text_config.values()))
         return ''
 
+    # Встроенные кнопки, подпись которых живёт в НАСТРОЙКЕ бота, а не в локалях:
+    # {builtin_id: имя поля Settings}. Легаси-меню берёт её оттуда же.
+    _SETTINGS_TEXT_BUILTINS: Final[dict[str, str]] = {'activate': 'ACTIVATE_BUTTON_TEXT'}
+
+    @classmethod
+    def _effective_text_key(cls, button_config: dict[str, Any]) -> str | None:
+        """Ключ локали кнопки с поправкой на режим продаж.
+
+        У кнопки подписки ключ ЗАВИСИТ от мультитарифа: легаси-меню в этом режиме
+        пишет «Мои подписки» (`MY_SUBSCRIPTIONS_BUTTON`), а не «Подписка». Ключ в
+        конфигурации статичен, поэтому подмена делается здесь — иначе тенант с
+        мультитарифом после включения флага увидел бы другую подпись.
+        """
+        text_key = button_config.get('text_key')
+        if (
+            button_config.get('builtin_id') == 'subscription'
+            and text_key == 'MENU_SUBSCRIPTION'
+            and settings.is_multi_tariff_enabled()
+        ):
+            return 'MY_SUBSCRIPTIONS_BUTTON'
+        return text_key
+
     @classmethod
     def _resolve_button_text(
         cls,
@@ -1105,14 +1146,27 @@ class MenuLayoutService:
         отката на соседний язык, который делает `_get_localized_text`.
 
         Кнопка без `text_key` (кастомная или встроенная без эквивалента в локалях) целиком
-        идёт по старому пути — её `text` авторитетен.
+        идёт по старому пути — её `text` авторитетен. Исключение — кнопки из
+        `_SETTINGS_TEXT_BUILTINS`: подпись им даёт настройка бота, и пустой `text`
+        означает «наследовать её», ровно как пустой `text` при `text_key` означает
+        «наследовать локаль».
         """
         text_config = button_config.get('text') or {}
-        text_key = button_config.get('text_key')
+        text_key = cls._effective_text_key(button_config)
+        explicit = text_config.get(language)
+
+        settings_attr = cls._SETTINGS_TEXT_BUILTINS.get(button_config.get('builtin_id') or '')
+        if settings_attr:
+            if isinstance(explicit, str) and explicit.strip():
+                return explicit
+            from_settings = getattr(settings, settings_attr, '')
+            if isinstance(from_settings, str) and from_settings:
+                return from_settings
+            return cls._get_localized_text(text_config, language)
+
         if not text_key:
             return cls._get_localized_text(text_config, language)
 
-        explicit = text_config.get(language)
         if isinstance(explicit, str) and explicit.strip():
             return explicit
 
@@ -1165,6 +1219,12 @@ class MenuLayoutService:
         return text
 
     # --- Построение кнопок ---
+
+    # Встроенная кнопка, ФОРМУ которой (callback / web_app / url) выбирает настройка
+    # развёртывания `CONNECT_BUTTON_MODE`, а не конфигурация конструктора. Тот же
+    # принцип, что и у `_SETTINGS_TEXT_BUILTINS`, только настройка владеет не подписью,
+    # а видом кнопки. Позиция в раскладке, подпись и выключатель остаются за админом.
+    _SETTINGS_SHAPED_BUILTIN: Final[str] = 'connect'
 
     @classmethod
     def _build_button(
@@ -1236,6 +1296,15 @@ class MenuLayoutService:
         if button_type == 'callback':
             # Кастомная кнопка с callback_data
             return InlineKeyboardButton(text=text, callback_data=action, icon_custom_emoji_id=custom_emoji_id)
+        # builtin `connect`: форму диктует CONNECT_BUTTON_MODE, и берём её ТОЙ ЖЕ
+        # функцией, что и текущее меню. `open_mode='direct'` — явная правка админа
+        # («открывать Mini App несмотря на настройку»), она эту передачу перебивает.
+        if (
+            button_type == 'builtin'
+            and button_config.get('builtin_id') == cls._SETTINGS_SHAPED_BUILTIN
+            and open_mode != 'direct'
+        ):
+            return build_main_menu_connect_button(text, context.subscription, icon_custom_emoji_id=custom_emoji_id)
         # builtin - проверяем open_mode
         if open_mode == 'direct':
             # Прямое открытие Mini App через WebAppInfo
@@ -1323,6 +1392,12 @@ class MenuLayoutService:
                 if not cls._evaluate_conditions(button_conditions, context):
                     continue
 
+                if button_id == CUSTOM_BUTTONS_SLOT_ID:
+                    row_buttons.extend(
+                        item for item in context.custom_buttons if isinstance(item, InlineKeyboardButton)
+                    )
+                    continue
+
                 # Строим кнопку (передаём button_id для кастомных кнопок)
                 button = cls._build_button(button_cfg, context, texts, button_id=button_id)
                 if button:
@@ -1372,6 +1447,11 @@ class MenuLayoutService:
 
                 button_conditions = button_cfg.get('conditions')
                 if not cls._evaluate_conditions(button_conditions, context):
+                    continue
+
+                if button_id == CUSTOM_BUTTONS_SLOT_ID:
+                    # Слот разворачивается только в рантайме бота: в предпросмотре
+                    # конструктора передавать в него нечего.
                     continue
 
                 text = cls._resolve_button_text(button_cfg, context.language, texts)

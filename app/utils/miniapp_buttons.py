@@ -5,6 +5,7 @@ from aiogram.types import InlineKeyboardButton
 
 from app.config import settings
 from app.utils.button_styles_cache import CALLBACK_TO_SECTION, get_cached_button_styles
+from app.utils.subscription_utils import get_display_subscription_link
 
 
 # Юникод-диапазоны для одиночного emoji в начале строки + модификаторы (skin tone,
@@ -169,6 +170,74 @@ def build_cabinet_url(path: str = '') -> str:
     if not path.startswith('/'):
         path = f'/{path}'
     return f'{base}{path}'
+
+
+def build_main_menu_connect_button(
+    text: str,
+    subscription,
+    *,
+    icon_custom_emoji_id: str | None = None,
+) -> InlineKeyboardButton:
+    """Кнопка «Подключиться» главного меню. ФОРМУ выбирает `CONNECT_BUTTON_MODE`.
+
+    Единственная реализация на оба меню: её зовёт и легаси-сборщик
+    (`app/keyboards/inline.py::get_main_menu_keyboard`), и конструктор
+    (`MenuLayoutService._build_button` для встроенной кнопки `connect`). Копия
+    этих пяти веток в конструкторе разъехалась бы с легаси — в VPN-биллинге это
+    ровно та кнопка, ради которой пользователь открывает бота.
+
+    Подпись сюда ПЕРЕДАЮТ: в легаси это локаль `CONNECT_BUTTON`, в конструкторе —
+    правка админа поверх той же локали. Настройка владеет только формой кнопки,
+    не текстом и не местом в раскладке.
+    """
+
+    def _fallback() -> InlineKeyboardButton:
+        return InlineKeyboardButton(
+            text=text,
+            callback_data='subscription_connect',
+            icon_custom_emoji_id=icon_custom_emoji_id,
+        )
+
+    connect_mode = settings.CONNECT_BUTTON_MODE
+    subscription_link = get_display_subscription_link(subscription)
+
+    if connect_mode == 'miniapp_subscription':
+        if subscription_link:
+            return InlineKeyboardButton(
+                text=text,
+                web_app=types.WebAppInfo(url=subscription_link),
+                icon_custom_emoji_id=icon_custom_emoji_id,
+            )
+        return _fallback()
+
+    if connect_mode == 'miniapp_custom':
+        return InlineKeyboardButton(
+            text=text,
+            web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
+            icon_custom_emoji_id=icon_custom_emoji_id,
+        )
+
+    if connect_mode == 'link':
+        if subscription_link:
+            return InlineKeyboardButton(
+                text=text,
+                url=subscription_link,
+                icon_custom_emoji_id=icon_custom_emoji_id,
+            )
+        return _fallback()
+
+    if connect_mode == 'happ_cryptolink':
+        if subscription_link:
+            return InlineKeyboardButton(
+                text=text,
+                callback_data=(
+                    'subscription_connect' if settings.is_multi_tariff_enabled() else 'open_subscription_link'
+                ),
+                icon_custom_emoji_id=icon_custom_emoji_id,
+            )
+        return _fallback()
+
+    return _fallback()
 
 
 def build_miniapp_or_callback_button(

@@ -10,7 +10,7 @@ from app.config import PERIOD_PRICES, settings
 from app.database.models import User
 from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
-from app.utils.miniapp_buttons import build_miniapp_or_callback_button
+from app.utils.miniapp_buttons import build_main_menu_connect_button, build_miniapp_or_callback_button
 from app.utils.price_display import PriceInfo, format_price_button
 from app.utils.pricing_utils import (
     apply_percentage_discount,
@@ -44,8 +44,8 @@ async def get_main_menu_keyboard_async(
     """
     Асинхронная версия get_main_menu_keyboard с поддержкой конструктора меню.
 
-    Если MENU_LAYOUT_ENABLED=True, использует конфигурацию из БД.
-    Иначе делегирует в синхронную версию.
+    Если MENU_LAYOUT_ENABLED=True и меню не в кабинетном режиме, использует
+    конфигурацию из БД. Иначе делегирует в синхронную версию.
 
     ``has_saved_cart`` больше не рисует кнопку «Вернуться к оформлению» в
     главном меню — она переехала на экран «Баланс». Параметр остаётся в
@@ -56,7 +56,10 @@ async def get_main_menu_keyboard_async(
     if has_saved_cart is None:
         has_saved_cart = False
 
-    if settings.MENU_LAYOUT_ENABLED:
+    # Кабинетный режим — отдельная раскладка (`_build_cabinet_main_menu_keyboard`),
+    # которой конструктор не знает. Проверка стоит ДО флага: иначе включение
+    # конструктора молча подменяло бы кабинетное меню обычным.
+    if settings.MENU_LAYOUT_ENABLED and not settings.is_cabinet_mode():
         from app.services.menu_layout_service import MenuContext, MenuLayoutService
 
         # Получаем данные для плейсхолдеров
@@ -626,61 +629,14 @@ def get_main_menu_keyboard(
     paired_buttons: list[InlineKeyboardButton] = []
 
     if has_active_subscription and subscription_is_active:
-        connect_mode = settings.CONNECT_BUTTON_MODE
-        subscription_link = get_display_subscription_link(subscription)
-
-        def _fallback_connect_button() -> InlineKeyboardButton:
-            return InlineKeyboardButton(
-                text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                callback_data='subscription_connect',
-            )
-
-        if connect_mode == 'miniapp_subscription':
-            if subscription_link:
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                            web_app=types.WebAppInfo(url=subscription_link),
-                        )
-                    ]
+        keyboard.append(
+            [
+                build_main_menu_connect_button(
+                    texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+                    subscription,
                 )
-            else:
-                keyboard.append([_fallback_connect_button()])
-        elif connect_mode == 'miniapp_custom':
-            keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                        web_app=types.WebAppInfo(url=settings.MINIAPP_CUSTOM_URL),
-                    )
-                ]
-            )
-        elif connect_mode == 'link':
-            if subscription_link:
-                keyboard.append(
-                    [InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), url=subscription_link)]
-                )
-            else:
-                keyboard.append([_fallback_connect_button()])
-        elif connect_mode == 'happ_cryptolink':
-            if subscription_link:
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
-                            callback_data=(
-                                'subscription_connect'
-                                if settings.is_multi_tariff_enabled()
-                                else 'open_subscription_link'
-                            ),
-                        )
-                    ]
-                )
-            else:
-                keyboard.append([_fallback_connect_button()])
-        else:
-            keyboard.append([_fallback_connect_button()])
+            ]
+        )
 
         happ_row = get_happ_download_button_row(texts)
         if happ_row:

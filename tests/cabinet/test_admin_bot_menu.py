@@ -39,15 +39,21 @@ BUILTIN_BUTTON_IDS = {
     'buy_subscription',
     'simple_subscription',
     'resume_checkout',
+    'custom_buttons',
     'promocode',
     'referrals',
     'contests',
     'support',
+    'activate',
     'info',
     'language',
     'admin_panel',
     'moderator_panel',
 }
+
+# Раскладка по умолчанию повторяет легаси-меню: три «прибитых» ряда, один ряд-поток
+# со всеми остальными кнопками и панели админа/модератора.
+DEFAULT_ROW_IDS = ['connect_row', 'happ_row', 'balance_row', 'main_row', 'admin_row', 'moderator_row']
 
 BOT_MENU_PATHS = {
     ('GET', '/cabinet/admin/bot-menu'),
@@ -141,8 +147,8 @@ def _valid_payload() -> MenuLayoutUpdateRequest:
 async def test_get_returns_default_layout_when_nothing_stored(store):
     result = await get_bot_menu_layout(_admin=_admin(), db=_db(store))
 
-    assert len(result.rows) == 13
-    assert len(result.buttons) == 17
+    assert [row.id for row in result.rows] == DEFAULT_ROW_IDS
+    assert set(result.buttons) == BUILTIN_BUTTON_IDS
 
 
 # ---- 2. PUT сохраняет, GET возвращает сохранённое -----------------------------
@@ -198,11 +204,11 @@ async def test_reset_restores_default_layout(store):
 
     result = await reset_bot_menu_layout(admin=_admin(), db=_db(store))
 
-    assert len(result.rows) == 13
-    assert len(result.buttons) == 17
+    assert [row.id for row in result.rows] == DEFAULT_ROW_IDS
+    assert set(result.buttons) == BUILTIN_BUTTON_IDS
 
     fresh = await get_bot_menu_layout(_admin=_admin(), db=_db(store))
-    assert len(fresh.rows) == 13
+    assert [row.id for row in fresh.rows] == DEFAULT_ROW_IDS
 
 
 # ---- 5. Каталог встроенных кнопок --------------------------------------------
@@ -211,7 +217,7 @@ async def test_reset_restores_default_layout(store):
 async def test_builtin_buttons_catalogue_is_complete():
     result = await list_bot_menu_builtin_buttons(_admin=_admin())
 
-    assert result.total == 17
+    assert result.total == len(BUILTIN_BUTTON_IDS)
     assert {item.id for item in result.items} == BUILTIN_BUTTON_IDS
 
 
