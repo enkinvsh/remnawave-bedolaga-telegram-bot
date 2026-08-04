@@ -10,6 +10,7 @@ from app.services.custom_emoji_pack_service import (
     PackLinkError,
     PackNotFoundError,
     PackTypeError,
+    _apply_aliases,
     build_mapping_from_packs,
     compute_coverage,
     fetch_pack,
@@ -307,6 +308,26 @@ def test_admin_section_is_wired_into_the_bot():
     bot_source = Path('app/bot.py').read_text(encoding='utf-8')
     assert 'admin_custom_emoji.register_handlers(dp)' in bot_source
     assert 'load_and_apply(bot, db)' in bot_source
+
+
+def test_apply_aliases_rejects_math_symbol_key(monkeypatch):
+    """Ключ-алиас `→` (U+2192, Sm) сам не эмодзи — Telegram отвергнет entity с таким текстом."""
+    monkeypatch.setattr('app.services.custom_emoji_pack_service.load_aliases', lambda: {'\u2192': '\u27a1'})
+    mapping = {'\u27a1': CHECK_ID}
+
+    _apply_aliases(mapping)
+
+    assert mapping == {'\u27a1': CHECK_ID}
+
+
+def test_apply_aliases_still_adds_regular_alias(monkeypatch):
+    """Обычный алиас с ключом-эмодзи (So) обязан по-прежнему добавляться."""
+    monkeypatch.setattr('app.services.custom_emoji_pack_service.load_aliases', lambda: {'🔍': '🔎'})
+    mapping = {'🔎': CROSS_ID}
+
+    _apply_aliases(mapping)
+
+    assert mapping == {'🔎': CROSS_ID, '🔍': CROSS_ID}
 
 
 def _fake_setting(values: dict[str, str]):

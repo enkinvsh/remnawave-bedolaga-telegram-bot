@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from app.services.custom_emoji_pack_service import apply_bundled_mapping
 from app.utils.custom_emoji import (
     MAX_SUBSTITUTIONS_PER_FIELD,
     build_mapping,
@@ -18,6 +19,12 @@ from app.utils.custom_emoji import (
     set_enabled_override,
     set_mapping,
     substitute_custom_emoji,
+)
+from tests.fixtures.custom_emoji_assets import (
+    ENTITY_RE,
+    build_real_pack_mapping,
+    find_alias_echoes,
+    is_math_symbol_key,
 )
 
 
@@ -339,6 +346,21 @@ def test_load_aliases_real_asset():
     # Цепочки запрещены: цель ищется в ПАКЕ, а не среди алиасов,
     # поэтому alias -> alias никогда бы не разрезолвился.
     assert not (set(aliases.values()) & set(aliases)), 'алиас указывает на другой алиас'
+    # Ключ-алиас сам становится текстом entity: не-эмодзи ключ рушит всё сообщение.
+    assert not [key for key in aliases if is_math_symbol_key(key)], 'ключ-алиас — математический символ'
+
+
+def test_bundled_map_real_asset_has_no_alias_echo():
+    """`map.json` — снимок, снятый ПОСЛЕ алиасов, и `load_mapping` читает его в обход `_apply_aliases`.
+
+    Эхо alias-слоя (Sm-ключ, дублирующий чужой id) в снимке означает, что его перегенерировали
+    из отравленного файла алиасов, и встроенный путь снова начнёт слать невалидные entity.
+    """
+    snapshot = dict(load_mapping().emoji_map)
+
+    assert not find_alias_echoes(snapshot), 'в снимок просочилось эхо alias-слоя'
+    # ↔ (U+2194) — тоже Sm, но со СВОИМ id: это законный ключ пака, его правило не трогает.
+    assert '\u2194' in snapshot
 
 
 def test_load_usage_real_asset():
@@ -376,6 +398,51 @@ def test_load_usage_drops_non_integer_counts(tmp_path):
     path.write_text('{"usage": {"✅": 5, "❌": "many", "💡": null}}', encoding='utf-8')
 
     assert load_usage(path) == {'✅': 5}
+
+
+def test_production_breadcrumb_leaves_math_arrow_bare():
+    """`🏠 → Платежи` с экрана «Настройки бота → группа» ронял ENTITY_TEXT_INVALID.
+
+    U+2192 (Sm) — математическая стрелка без эмодзи-формы (эмодзи-стрелка — U+27A1 ➡️).
+    Telegram валидирует ТЕКСТ entity, поэтому `<tg-emoji>→</tg-emoji>` отвергает всё
+    сообщение целиком. Ключ приезжал в карту из `aliases.json`, а не из пака.
+    """
+    mapping = build_real_pack_mapping()
+
+    result = substitute_custom_emoji('🏠 → Платежи', mapping=mapping)
+
+    assert result is not None
+    wrapped = ENTITY_RE.findall(result)
+    assert '🏠' in wrapped, 'дом обязан остаться кастомным эмодзи'
+    assert '→' not in wrapped, 'стрелка U+2192 не должна попадать в <tg-emoji>'
+    assert result.endswith(' → Платежи')
+
+
+def test_bundled_path_leaves_math_arrow_bare():
+    """Тот же экран на ВСТРОЕННОЙ карте: `apply_bundled_mapping` минует `_apply_aliases`.
+
+    Это честный шов прода: именно эту функцию зовёт `load_and_apply`, когда в БД не
+    настроено ни одного пака. Чистка одного `aliases.json` этот путь НЕ лечит.
+    """
+    apply_bundled_mapping()
+
+    result = substitute_custom_emoji('🏠 → Платежи')
+
+    assert result is not None
+    wrapped = ENTITY_RE.findall(result)
+    assert '🏠' in wrapped, 'дом обязан остаться кастомным эмодзи'
+    assert '→' not in wrapped, 'стрелка U+2192 не должна попадать в <tg-emoji>'
+    assert result.endswith(' → Платежи')
+
+
+def test_pack_sourced_keys_are_not_eaten_by_the_guard():
+    """Ключи из паков валидны по построению: Telegram сам назначил их стикерам."""
+    emoji_map = build_real_pack_mapping().emoji_map
+
+    assert emoji_map['\u2194'] == load_mapping().emoji_map['\u2194'], '↔ пришёл из пака'
+    assert emoji_map['\u2139'] == load_mapping().emoji_map['\u2139'], 'ℹ пришёл из пака'
+    assert emoji_map['#\u20e3'] == load_mapping().emoji_map['#\u20e3'], '#⃣ пришёл из пака'
+    assert '\u2192' not in emoji_map, '→ приезжал только через алиас'
 
 
 def test_enabled_override_roundtrip():

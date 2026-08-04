@@ -4,7 +4,6 @@
   "note": "emoji -> emoji substitutes applied ON TOP of any pack. Pack-independent: the target emoji is looked up in whatever pack is loaded. Keys/values are VS16-stripped."
  },
  "aliases": {
-  "→": "➡",
   "↩": "◀",
   "♻": "🔃",
   "✖": "❌",

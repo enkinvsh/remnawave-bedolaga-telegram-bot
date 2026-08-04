@@ -6,6 +6,7 @@
 """
 
 import re
+import unicodedata
 from typing import Any, Final
 
 import structlog
@@ -126,10 +127,22 @@ async def build_mapping_from_packs(bot: Any, names: list[str]) -> dict[str, str]
     return mapping
 
 
+def _is_math_symbol_key(key: str) -> bool:
+    return all(unicodedata.category(char) == 'Sm' for char in key)
+
+
 def _apply_aliases(mapping: dict[str, str]) -> None:
     """Слой пак-независимых замен: алиас получает id цели, если та есть, а алиаса ещё нет."""
     for alias, target in load_aliases().items():
         if alias in mapping:
+            continue
+        # Telegram валидирует ТЕКСТ entity, а не id: если сам ключ-алиас не эмодзи
+        # (например → U+2192 — математическая стрелка без эмодзи-формы, эмодзи-стрелка
+        # это ➡ U+27A1), то <tg-emoji> с таким текстом рушит ЛЮБОЕ сообщение с этим
+        # символом — ENTITY_TEXT_INVALID. Ключи из паков сюда не попадают: их Telegram
+        # назначил стикерам сам, поэтому они валидны по построению.
+        if _is_math_symbol_key(alias):
+            logger.warning('Алиас кастомного эмодзи отклонён: ключ не эмодзи', alias=alias)
             continue
         target_id = mapping.get(target)
         if target_id is not None:
