@@ -147,9 +147,10 @@ def _build_user_button_text(
     """
     status_emoji = _get_user_status_emoji(user)
     sub_emoji = _get_subscription_emoji(user)
+    leading_emoji = sub_emoji if user.status == UserStatus.ACTIVE.value else status_emoji
 
     if filter_type == UserFilterType.BALANCE:
-        button_text = f'{status_emoji} {sub_emoji} {user.full_name}'
+        button_text = f'{leading_emoji} {user.full_name}'
         if user.balance_kopeks > 0:
             button_text += f' | 💰 {settings.format_price(user.balance_kopeks)}'
         # Use first active subscription from subscriptions list
@@ -166,18 +167,20 @@ def _build_user_button_text(
         button_text = f'{status_emoji} {user.full_name} | 📢 {campaign_name} | 📅 {registered_display}'
 
     else:
-        button_text = f'{status_emoji} {sub_emoji} {user.full_name}'
+        button_text = f'{leading_emoji} {user.full_name}'
 
     # Обрезка длинных имён
     if len(button_text) > 60:
         short_name = user.full_name[:17] + '...' if len(user.full_name) > 20 else user.full_name
         # Пересобираем с коротким именем
         if filter_type == UserFilterType.BALANCE:
-            button_text = f'{status_emoji} {sub_emoji} {short_name}'
+            button_text = f'{leading_emoji} {short_name}'
             if user.balance_kopeks > 0:
                 button_text += f' | 💰 {settings.format_price(user.balance_kopeks)}'
-        else:
+        elif filter_type == UserFilterType.CAMPAIGN:
             button_text = f'{status_emoji} {short_name}'
+        else:
+            button_text = f'{leading_emoji} {short_name}'
 
     return button_text
 

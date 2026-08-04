@@ -329,6 +329,7 @@ def test_load_aliases_real_asset():
     aliases = load_aliases()
 
     assert aliases['🔍'] == '🔎'
+    assert aliases['🛑'] == '🔴'
     assert aliases
     assert all(isinstance(key, str) and isinstance(value, str) for key, value in aliases.items())
     # Ключи и значения нормализованы: матчинг идёт по карте со срезанным VS16.
