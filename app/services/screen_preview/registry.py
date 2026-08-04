@@ -293,3 +293,140 @@ register_screen(
         states=SUPPORT_STATES,
     )
 )
+
+
+# Ни один из четырёх экранов ниже не зависит от подписки, поэтому все они берут
+# одно состояние: девять вариантов в выпадающем списке ничего бы не меняли.
+STATELESS_STATES: tuple[SyntheticState, ...] = (SyntheticState(DEFAULT_SYNTHETIC_STATE, 'Демо-пользователь'),)
+
+
+# Экран кнопки menu_promocode рисует show_promocode_menu из promocode.py, и
+# рисует он ровно один ключ — PROMOCODE_ENTER уходит в edit_text без сборки.
+PROMOCODE_KEYS: tuple[str, ...] = ('PROMOCODE_ENTER',)
+
+
+async def _render_promocode(texts: Texts, db: Any, state: str) -> str:
+    """Экран «Промокод» — та же строка, что уходит в edit_text хендлера menu_promocode."""
+    return texts.PROMOCODE_ENTER
+
+
+register_screen(
+    ScreenDefinition(
+        id='promocode',
+        title='Промокод',
+        description='Экран кнопки «Промокод»: приглашение ввести код.',
+        render=_render_promocode,
+        keys=PROMOCODE_KEYS,
+        states=STATELESS_STATES,
+    )
+)
+
+
+# Экран кнопки menu_referrals собирает build_referral_info_text из referral.py.
+REFERRAL_KEYS: tuple[str, ...] = (
+    'REFERRAL_PROGRAM_TITLE',
+    'REFERRAL_STATS_HEADER',
+    'REFERRAL_STATS_INVITED',
+    'REFERRAL_STATS_FIRST_TOPUPS',
+    'REFERRAL_STATS_ACTIVE',
+    'REFERRAL_STATS_CONVERSION',
+    'REFERRAL_STATS_TOTAL_EARNED',
+    'REFERRAL_STATS_MONTH_EARNED',
+    'REFERRAL_REWARDS_HEADER',
+    # Строки наград живут за настройками сумм: при нулевом бонусе бот их не
+    # печатает вовсе, но на боевой конфигурации они видны.
+    'REFERRAL_REWARD_NEW_USER',
+    'REFERRAL_REWARD_INVITER',
+    # Взаимоисключающие ветки: лимит на число платежей с комиссией задан или нет.
+    'REFERRAL_REWARD_COMMISSION_LIMITED',
+    'REFERRAL_REWARD_COMMISSION',
+    'REFERRAL_BOT_LINK_TITLE',
+    # Ссылка на кабинет печатается только когда CABINET_URL настроен.
+    'REFERRAL_CABINET_LINK_TITLE',
+    'REFERRAL_CODE_TITLE',
+    # Блок последних начислений: ReferralEarning читается из БД по id
+    # пользователя, у демо-пользователя таких строк нет.
+    'REFERRAL_RECENT_EARNINGS_HEADER',
+    'REFERRAL_RECENT_EARNINGS_ITEM',
+    'REFERRAL_EARNING_REASON_FIRST_TOPUP',
+    'REFERRAL_EARNING_REASON_COMMISSION_TOPUP',
+    'REFERRAL_EARNING_REASON_COMMISSION_PURCHASE',
+    # Блок «доходы по типам» — та же агрегация по БД, тоже недостижим.
+    'REFERRAL_EARNINGS_BY_TYPE_HEADER',
+    'REFERRAL_EARNINGS_FIRST_TOPUPS',
+    'REFERRAL_EARNINGS_TOPUPS',
+    'REFERRAL_EARNINGS_PURCHASES',
+    'REFERRAL_INVITE_FOOTER',
+)
+
+
+async def _render_referral(texts: Texts, db: Any, state: str) -> str:
+    """Экран «Партнерка» — тем же билдером, что зовёт хендлер menu_referrals.
+
+    ``bot_username`` не передаём: хендлер берёт его из ``callback.bot.get_me()``,
+    а без него ссылка собирается по username из настроек — ровно та же строка.
+    """
+    from app.handlers.referral import build_referral_info_text
+
+    from .synthetic import build_synthetic_user
+
+    return await build_referral_info_text(build_synthetic_user(texts.language, state=state), texts, db)
+
+
+register_screen(
+    ScreenDefinition(
+        id='referral',
+        title='Партнерка',
+        description='Экран кнопки «Партнёрская программа»: статистика приглашений, награды, ссылки и код.',
+        render=_render_referral,
+        keys=REFERRAL_KEYS,
+        states=STATELESS_STATES,
+    )
+)
+
+
+# Экран кнопки menu_info рисует show_info_menu из menu.py: подпись — заголовок и
+# подсказка, всё остальное на этом экране живёт в кнопках, а не в тексте.
+INFO_KEYS: tuple[str, ...] = ('MENU_INFO_HEADER', 'MENU_INFO_PROMPT')
+
+
+async def _render_info(texts: Texts, db: Any, state: str) -> str:
+    """Экран «Инфо» — той же функцией, которой подпись собирает хендлер."""
+    from app.handlers.menu import build_info_menu_caption
+
+    return build_info_menu_caption(texts)
+
+
+register_screen(
+    ScreenDefinition(
+        id='info',
+        title='Инфо',
+        description='Экран кнопки «Инфо»: заголовок раздела и приглашение выбрать подраздел.',
+        render=_render_info,
+        keys=INFO_KEYS,
+        states=STATELESS_STATES,
+    )
+)
+
+
+# Экран кнопки menu_language рисует show_language_menu из menu.py — один ключ в
+# caption. Ветки «пользователь не найден» и «выбор языка выключен» отвечают
+# алертом (callback.answer), то есть экраном не являются и сюда не входят.
+LANGUAGE_KEYS: tuple[str, ...] = ('LANGUAGE_PROMPT',)
+
+
+async def _render_language(texts: Texts, db: Any, state: str) -> str:
+    """Экран «Язык» — та же строка, что уходит в caption хендлера menu_language."""
+    return texts.t('LANGUAGE_PROMPT', '🌐 Выберите язык интерфейса:')
+
+
+register_screen(
+    ScreenDefinition(
+        id='language',
+        title='Язык',
+        description='Экран кнопки «Язык»: приглашение выбрать язык интерфейса.',
+        render=_render_language,
+        keys=LANGUAGE_KEYS,
+        states=STATELESS_STATES,
+    )
+)

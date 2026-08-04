@@ -30,22 +30,23 @@ from app.utils.user_utils import (
 logger = structlog.get_logger(__name__)
 
 
-async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    # Проверяем, включена ли реферальная программа
-    if not settings.is_referral_program_enabled():
-        texts = get_texts(db_user.language)
-        await callback.answer(texts.t('REFERRAL_PROGRAM_DISABLED', 'Реферальная программа отключена'), show_alert=True)
-        return
+async def build_referral_info_text(
+    db_user: User,
+    texts,
+    db: AsyncSession,
+    bot_username: str | None = None,
+) -> str:
+    """Текст экрана «Партнерка».
 
-    texts = get_texts(db_user.language)
+    Живёт отдельно от хендлера, потому что хендлеру нужен ``CallbackQuery`` (из
+    него берётся username бота), а превью экрана в кабинете рендерится headless.
+    Оба обязаны звать эту функцию — копия форматирования разъедется с ботом.
 
-    if not db_user.referral_code:
-        await callback.answer(texts.t('REFERRAL_CODE_NOT_ASSIGNED', 'Реферальный код не назначен'), show_alert=True)
-        return
-
+    ``bot_username`` необязателен: без него ``get_bot_referral_link`` подставит
+    username из настроек, поэтому превью получает ту же ссылку, что и бот.
+    """
     summary = await get_user_referral_summary(db, db_user.id)
 
-    bot_username = (await callback.bot.get_me()).username
     bot_referral_link = settings.get_bot_referral_link(db_user.referral_code, bot_username)
     cabinet_referral_link = settings.get_cabinet_referral_link(db_user.referral_code)
 
@@ -236,6 +237,25 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
         'REFERRAL_INVITE_FOOTER',
         '📢 Приглашайте друзей и зарабатывайте!',
     )
+
+    return referral_text
+
+
+async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    # Проверяем, включена ли реферальная программа
+    if not settings.is_referral_program_enabled():
+        texts = get_texts(db_user.language)
+        await callback.answer(texts.t('REFERRAL_PROGRAM_DISABLED', 'Реферальная программа отключена'), show_alert=True)
+        return
+
+    texts = get_texts(db_user.language)
+
+    if not db_user.referral_code:
+        await callback.answer(texts.t('REFERRAL_CODE_NOT_ASSIGNED', 'Реферальный код не назначен'), show_alert=True)
+        return
+
+    bot_username = (await callback.bot.get_me()).username
+    referral_text = await build_referral_info_text(db_user, texts, db, bot_username)
 
     await edit_or_answer_photo(
         callback,

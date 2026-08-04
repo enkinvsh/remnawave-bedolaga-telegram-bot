@@ -302,6 +302,21 @@ async def show_service_rules(callback: types.CallbackQuery, db_user: User, db: A
     await callback.answer()
 
 
+def build_info_menu_caption(texts) -> str:
+    """Подпись экрана «Инфо».
+
+    Живёт отдельно от хендлера, потому что хендлеру нужен ``CallbackQuery``, а
+    превью экрана в кабинете рендерится headless. Оба обязаны звать эту
+    функцию — копия условия «пустая подсказка — значит только заголовок»
+    разъедется с ботом.
+
+    Пользователь и БД здесь не нужны: подпись собирается только из строк.
+    """
+    header = texts.t('MENU_INFO_HEADER', 'ℹ️ <b>Инфо</b>')
+    prompt = texts.t('MENU_INFO_PROMPT', 'Выберите раздел:')
+    return f'{header}\n\n{prompt}' if prompt else header
+
+
 async def show_info_menu(
     callback: types.CallbackQuery,
     db_user: User,
@@ -321,9 +336,7 @@ async def show_info_menu(
 
     texts = get_texts(db_user.language)
 
-    header = texts.t('MENU_INFO_HEADER', 'ℹ️ <b>Инфо</b>')
-    prompt = texts.t('MENU_INFO_PROMPT', 'Выберите раздел:')
-    caption = f'{header}\n\n{prompt}' if prompt else header
+    caption = build_info_menu_caption(texts)
 
     privacy_enabled = is_visible_in_bot(
         settings.PRIVACY_POLICY_DISPLAY_MODE
