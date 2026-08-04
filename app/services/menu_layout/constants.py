@@ -328,146 +328,79 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
 }
 
 
-# Информация о встроенных кнопках для API
-BUILTIN_BUTTONS_INFO: list[dict[str, Any]] = [
-    {
-        'id': 'connect',
-        'default_text': {'ru': '🔗 Подключиться', 'en': '🔗 Connect'},
-        'callback_data': 'subscription_connect',
+# Каталог палитры конструктора (`GET /builtin-buttons`) — то, что кабинет ЗАПИСЫВАЕТ
+# в конфигурацию тенанта, когда админ добавляет встроенную кнопку.
+#
+# ПОДПИСИ ЗДЕСЬ НЕТ СОЗНАТЕЛЬНО. Раньше каталог хранил свою пару ru/en, она
+# разъехалась с локалями (каталог обещал «📊 Подписка», бот рисовал «📱 Подписка»),
+# а кабинет копировал этот литерал в `text` новой кнопки — и намертво прибивал
+# подпись, отключая `locale_overrides` тенанта и все языки помимо ru/en.
+# Теперь `default_text` считает `MenuLayoutService.get_builtin_buttons_info` в
+# рантайме — тем же `_resolve_button_text`, которым бот рисует кнопку, — поэтому
+# расходиться нечему.
+#
+# `id`, `text_key` и `callback_data` тоже НЕ дублируются: они берутся из
+# `DEFAULT_MENU_CONFIG`. Здесь остаётся только то, чего в раскладке нет.
+#
+# `default_conditions` — НЕ копия условий из раскладки, а условия, с которыми
+# кнопку безопасно положить в ЛЮБОЙ ряд. В раскладке часть из них висит на ряде
+# (`happ_row` несёт `happ_enabled`, `connect_row` — активную подписку), а ряд,
+# который выберет админ, их не несёт.
+#
+# `preview_text` есть только у псевдо-кнопки-слота: своей подписи у неё нет, и
+# пустая строка в палитре была бы бесполезна.
+_BUILTIN_CATALOGUE: dict[str, dict[str, Any]] = {
+    'connect': {
         'default_conditions': {'has_active_subscription': True, 'subscription_is_active': True},
-        'supports_dynamic_text': False,
         'supports_direct_open': True,
     },
-    {
-        'id': 'happ_download',
-        'default_text': {'ru': '⬇️ Скачать Happ', 'en': '⬇️ Download Happ'},
-        'callback_data': 'subscription_happ_download',
-        'default_conditions': {'happ_enabled': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'subscription',
-        'default_text': {'ru': '📊 Подписка', 'en': '📊 Subscription'},
-        'callback_data': 'menu_subscription',
-        'default_conditions': {'has_active_subscription': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'buy_traffic',
-        'default_text': {'ru': '📈 Докупить трафик', 'en': '📈 Buy traffic'},
-        'callback_data': 'buy_traffic',
-        'default_conditions': {'has_traffic_limit': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'balance',
-        'default_text': {'ru': '💰 Баланс: {balance}', 'en': '💰 Balance: {balance}'},
-        'callback_data': 'menu_balance',
-        'default_conditions': None,
-        'supports_dynamic_text': True,
-    },
-    {
-        'id': 'trial',
-        'default_text': {'ru': '🎁 Пробный период', 'en': '🎁 Free trial'},
-        'callback_data': 'menu_trial',
-        'default_conditions': {'show_trial': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'buy_subscription',
-        'default_text': {'ru': '🛒 Купить подписку', 'en': '🛒 Buy subscription'},
-        'callback_data': 'menu_buy',
-        'default_conditions': {'show_buy': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'simple_subscription',
-        'default_text': {'ru': '💳 Простая подписка', 'en': '💳 Simple subscription'},
-        'callback_data': 'simple_subscription_purchase',
-        'default_conditions': {'simple_subscription_enabled': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'resume_checkout',
-        'default_text': {'ru': '↩️ Вернуться к оформлению', 'en': '↩️ Resume checkout'},
-        'callback_data': 'return_to_saved_cart',
-        'default_conditions': {'has_saved_cart': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': CUSTOM_BUTTONS_SLOT_ID,
-        'default_text': {
+    'happ_download': {'default_conditions': {'happ_enabled': True}},
+    'subscription': {'default_conditions': {'has_active_subscription': True}},
+    'buy_traffic': {'default_conditions': {'has_traffic_limit': True}},
+    'balance': {'supports_dynamic_text': True},
+    'trial': {'default_conditions': {'show_trial': True}},
+    'buy_subscription': {'default_conditions': {'show_buy': True}},
+    'simple_subscription': {'default_conditions': {'simple_subscription_enabled': True}},
+    'resume_checkout': {'default_conditions': {'has_saved_cart': True}},
+    CUSTOM_BUTTONS_SLOT_ID: {
+        'preview_text': {
             'ru': '⟨кнопки, переданные ботом⟩',
             'en': '⟨buttons passed by the bot⟩',
         },
-        'callback_data': '',
-        'default_conditions': None,
-        'supports_dynamic_text': False,
     },
-    {
-        'id': 'promocode',
-        'default_text': {'ru': '🎟️ Промокод', 'en': '🎟️ Promo code'},
-        'callback_data': 'menu_promocode',
-        'default_conditions': None,
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'referrals',
-        'default_text': {'ru': '👥 Рефералы', 'en': '👥 Referrals'},
-        'callback_data': 'menu_referrals',
-        'default_conditions': {'referral_enabled': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'contests',
-        'default_text': {'ru': '🎲 Конкурсы', 'en': '🎲 Contests'},
-        'callback_data': 'contests_menu',
-        'default_conditions': {'contests_visible': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'support',
-        'default_text': {'ru': '💬 Поддержка', 'en': '💬 Support'},
-        'callback_data': 'menu_support',
-        'default_conditions': {'support_enabled': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'activate',
-        'default_text': {'ru': 'активировать', 'en': 'activate'},
-        'callback_data': 'activate_button',
-        'default_conditions': {'activate_button_visible': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'info',
-        'default_text': {'ru': 'ℹ️ Инфо', 'en': 'ℹ️ Info'},
-        'callback_data': 'menu_info',
-        'default_conditions': None,
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'language',
-        'default_text': {'ru': '🌐 Язык', 'en': '🌐 Language'},
-        'callback_data': 'menu_language',
-        'default_conditions': {'language_selection_enabled': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'admin_panel',
-        'default_text': {'ru': '⚙️ Админ панель', 'en': '⚙️ Admin panel'},
-        'callback_data': 'admin_panel',
-        'default_conditions': {'is_admin': True},
-        'supports_dynamic_text': False,
-    },
-    {
-        'id': 'moderator_panel',
-        'default_text': {'ru': '🧑‍⚖️ Модерация', 'en': '🧑‍⚖️ Moderation'},
-        'callback_data': 'moderator_panel',
-        'default_conditions': {'is_moderator': True},
-        'supports_dynamic_text': False,
-    },
-]
+    'promocode': {},
+    'referrals': {'default_conditions': {'referral_enabled': True}},
+    'contests': {'default_conditions': {'contests_visible': True}},
+    'support': {'default_conditions': {'support_enabled': True}},
+    'activate': {'default_conditions': {'activate_button_visible': True}},
+    'info': {},
+    'language': {'default_conditions': {'language_selection_enabled': True}},
+    'admin_panel': {'default_conditions': {'is_admin': True}},
+    'moderator_panel': {'default_conditions': {'is_moderator': True}},
+}
+
+
+def _build_builtin_buttons_info() -> list[dict[str, Any]]:
+    """Собрать каталог из раскладки по умолчанию — единственного источника."""
+    info: list[dict[str, Any]] = []
+    for button_id, extras in _BUILTIN_CATALOGUE.items():
+        button = DEFAULT_MENU_CONFIG['buttons'][button_id]
+        entry: dict[str, Any] = {
+            'id': button_id,
+            'text_key': button['text_key'],
+            'callback_data': button['action'],
+            'default_conditions': extras.get('default_conditions'),
+            'supports_dynamic_text': extras.get('supports_dynamic_text', False),
+            'supports_direct_open': extras.get('supports_direct_open', False),
+        }
+        preview_text = extras.get('preview_text')
+        if preview_text:
+            entry['preview_text'] = preview_text
+        info.append(entry)
+    return info
+
+
+BUILTIN_BUTTONS_INFO: list[dict[str, Any]] = _build_builtin_buttons_info()
 
 
 # Все доступные callback_data в боте (для добавления кастомных кнопок)

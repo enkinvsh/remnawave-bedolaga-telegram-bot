@@ -167,7 +167,21 @@ class BuiltinButtonInfo(BaseModel):
     """Информация о встроенной кнопке."""
 
     id: str = Field(description='Идентификатор кнопки')
-    default_text: dict[str, str] = Field(description='Текст по умолчанию')
+    text_key: str | None = Field(
+        default=None,
+        max_length=100,
+        description=(
+            'Ключ локализации подписи. Кабинет обязан перенести его на новую кнопку и '
+            'оставить `text` пустым — иначе подпись превратится в правку админа и '
+            'отключит локали, `locale_overrides` и все языки помимо записанных'
+        ),
+    )
+    default_text: dict[str, str] = Field(
+        description=(
+            'Подпись, которую бот рисует СЕЙЧАС, на каждом языке из AVAILABLE_LANGUAGES. '
+            'Это превью для палитры, а НЕ значение для записи в `text`'
+        )
+    )
     callback_data: str = Field(description='callback_data кнопки')
     default_conditions: ButtonConditions | None = Field(default=None, description='Условия показа по умолчанию')
     supports_dynamic_text: bool = Field(default=False, description='Поддерживает ли динамический текст')

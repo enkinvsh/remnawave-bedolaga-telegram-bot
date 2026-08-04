@@ -6,6 +6,7 @@ import asyncio
 import copy
 import ipaddress
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, Final, Literal
 from urllib.parse import SplitResult, urlsplit
@@ -183,9 +184,46 @@ class MenuLayoutService:
         return copy.deepcopy(DEFAULT_MENU_CONFIG)
 
     @classmethod
-    def get_builtin_buttons_info(cls) -> list[dict[str, Any]]:
-        """Получить информацию о встроенных кнопках."""
-        return BUILTIN_BUTTONS_INFO.copy()
+    def get_builtin_buttons_info(cls, languages: Sequence[str] | None = None) -> list[dict[str, Any]]:
+        """Каталог встроенных кнопок с ЧЕСТНЫМ превью подписи на каждом отгружаемом языке.
+
+        `default_text` — это превью палитры: админ по нему выбирает кнопку, поэтому
+        оно обязано показывать то, что бот РИСУЕТ СЕЙЧАС. Разрешается тем же
+        `_resolve_button_text`, которым строится настоящая кнопка, поэтому сюда сами
+        собой попадают все три источника подписи: локаль по `text_key`,
+        `locale_overrides` тенанта из редактора локалей и настройка бота у кнопок из
+        `_SETTINGS_TEXT_BUILTINS`. Хранить его статически нельзя: и локали, и
+        override-ы, и настройки меняются в рантайме.
+
+        Языки берутся из `AVAILABLE_LANGUAGES`, а не из пары ru/en: подпись правится
+        по языкам, и превью на языке, которого нет в ответе, админ бы не увидел.
+        """
+        resolved_languages = list(languages) if languages is not None else settings.get_available_languages()
+        texts_by_language = {language: get_texts(language) for language in resolved_languages}
+
+        catalogue: list[dict[str, Any]] = []
+        for item in BUILTIN_BUTTONS_INFO:
+            button = DEFAULT_MENU_CONFIG['buttons'][item['id']]
+            preview_text = item.get('preview_text') or {}
+
+            default_text: dict[str, str] = {}
+            for language in resolved_languages:
+                label = cls._resolve_button_text(button, language, texts_by_language[language])
+                default_text[language] = label or cls._get_localized_text(preview_text, language)
+
+            catalogue.append(
+                {
+                    'id': item['id'],
+                    'text_key': item['text_key'],
+                    'default_text': default_text,
+                    'callback_data': item['callback_data'],
+                    'default_conditions': copy.deepcopy(item['default_conditions']),
+                    'supports_dynamic_text': item['supports_dynamic_text'],
+                    'supports_direct_open': item['supports_direct_open'],
+                }
+            )
+
+        return catalogue
 
     @classmethod
     async def get_available_callbacks(cls, db: AsyncSession) -> list[dict[str, Any]]:

@@ -206,6 +206,7 @@ async def list_builtin_buttons(
         items.append(
             BuiltinButtonInfo(
                 id=btn_info['id'],
+                text_key=btn_info['text_key'],
                 default_text=btn_info['default_text'],
                 callback_data=btn_info['callback_data'],
                 default_conditions=ButtonConditions(**btn_info['default_conditions'])

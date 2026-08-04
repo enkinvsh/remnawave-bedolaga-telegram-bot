@@ -227,6 +227,7 @@ async def list_bot_menu_builtin_buttons(
     items = [
         BuiltinButtonInfo(
             id=button['id'],
+            text_key=button['text_key'],
             default_text=button['default_text'],
             callback_data=button['callback_data'],
             default_conditions=ButtonConditions(**button['default_conditions'])
