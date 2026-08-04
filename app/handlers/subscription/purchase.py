@@ -237,6 +237,16 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
     await callback.answer()
 
 
+def _drop_rows_with_placeholder(template: str, placeholder: str) -> str:
+    """Убирает из шаблона строки с указанным плейсхолдером.
+
+    Раньше строку «Устройства» вырезали ``.replace()`` по русскому тексту,
+    поэтому в остальных четырёх локалях она не пряталась. Плейсхолдер
+    одинаков во всех языках и переживает правки текста в редакторе локалей.
+    """
+    return '\n'.join(row for row in template.split('\n') if placeholder not in row)
+
+
 async def build_subscription_overview_text(user: User, texts, db: AsyncSession, subscription=None) -> str:
     """Собирает текст экрана «Подписка» (кнопка menu_subscription).
 
@@ -542,10 +552,7 @@ async def build_subscription_overview_text(user: User, texts, db: AsyncSession, 
         )
 
     if not show_devices:
-        message_template = message_template.replace(
-            '\n📱 Устройства: {devices_used} / {device_limit}',
-            '',
-        )
+        message_template = _drop_rows_with_placeholder(message_template, '{devices_used}')
 
     device_limit_display = str(subscription.device_limit)
 
@@ -3048,10 +3055,7 @@ async def handle_subscription_settings(callback: types.CallbackQuery, db_user: U
     )
 
     if not show_devices:
-        settings_template = settings_template.replace(
-            '\n📱 Устройства: {devices_used} / {devices_limit}',
-            '',
-        )
+        settings_template = _drop_rows_with_placeholder(settings_template, '{devices_used}')
 
     devices_limit_display = str(subscription.device_limit)
 
