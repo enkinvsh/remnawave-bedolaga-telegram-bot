@@ -89,7 +89,6 @@ from .notifications import (
 )
 from .pricing import (
     get_subscription_cost,
-    get_subscription_info_text,
 )
 from .promo import (
     claim_discount_offer,
@@ -162,7 +161,6 @@ __all__ = [
     'get_reset_devices_confirm_keyboard',
     'get_servers_display_names',
     'get_subscription_cost',
-    'get_subscription_info_text',
     'get_traffic_packages_info',
     'get_traffic_switch_keyboard',
     'handle_add_countries',

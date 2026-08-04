@@ -1,5 +1,4 @@
 import html
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,11 +8,9 @@ from app.database.models import User
 from app.utils.pricing_utils import (
     format_period_description,
 )
-from app.utils.timezone import format_local_datetime
 
 from .common import logger
-from .countries import _get_available_countries, _get_countries_info
-from .devices import get_current_devices_count
+from .countries import _get_available_countries
 from .promo import _build_promo_group_discount_text, _get_promo_offer_hint
 
 
@@ -283,143 +280,3 @@ async def get_subscription_cost(subscription, db: AsyncSession) -> int:
     except Exception as e:
         logger.error('Error calculating subscription cost', error=e)
         return 0
-
-
-async def get_subscription_info_text(subscription, texts, db_user, db: AsyncSession):
-    devices_selection_enabled = settings.is_devices_selection_enabled()
-
-    if devices_selection_enabled:
-        devices_used = await get_current_devices_count(db_user)
-    else:
-        devices_used = 0
-    countries_info = await _get_countries_info(subscription.connected_squads)
-    ', '.join([c['name'] for c in countries_info]) if countries_info else 'Нет'
-
-    subscription_url = getattr(subscription, 'subscription_url', None) or 'Генерируется...'
-
-    if subscription.is_trial:
-        status_text = texts.t('SUBSCRIPTION_INFO_STATUS_TRIAL', '🎁 Тестовая')
-        type_text = texts.t('SUBSCRIPTION_INFO_TYPE_TRIAL', 'Триал')
-    else:
-        if subscription.is_active:
-            status_text = texts.t('SUBSCRIPTION_INFO_STATUS_PAID', '✅ Оплачена')
-        else:
-            status_text = texts.t('SUBSCRIPTION_INFO_STATUS_EXPIRED', '⌛ Истекла')
-        type_text = texts.t('SUBSCRIPTION_INFO_TYPE_PAID', 'Платная подписка')
-
-    traffic_limit = subscription.traffic_limit_gb or 0
-    if traffic_limit == 0:
-        traffic_text = texts.t('SUBSCRIPTION_INFO_TRAFFIC_UNLIMITED', '∞ Безлимитный')
-    else:
-        traffic_text = texts.t('SUBSCRIPTION_INFO_TRAFFIC_LIMITED', '{traffic_gb} ГБ').format(traffic_gb=traffic_limit)
-
-    subscription_cost = await get_subscription_cost(subscription, db)
-
-    info_template = texts.SUBSCRIPTION_INFO
-
-    if not devices_selection_enabled:
-        info_template = info_template.replace(
-            '\n📱 <b>Устройства:</b> {devices_used} / {devices_limit}',
-            '',
-        ).replace(
-            '\n📱 <b>Devices:</b> {devices_used} / {devices_limit}',
-            '',
-        )
-
-    info_text = info_template.format(
-        status=status_text,
-        type=type_text,
-        end_date=format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M'),
-        days_left=max(0, subscription.days_left),
-        traffic_used=texts.format_traffic(subscription.traffic_used_gb, is_limit=False),
-        traffic_limit=traffic_text,
-        countries_count=len(subscription.connected_squads or []),
-        devices_used=devices_used,
-        devices_limit=subscription.device_limit,
-        autopay_status=(
-            texts.t('SUBSCRIPTION_INFO_AUTOPAY_ON', '✅ Включен')
-            if subscription.autopay_enabled
-            else texts.t('SUBSCRIPTION_INFO_AUTOPAY_OFF', '⌛ Выключен')
-        ),
-    )
-
-    if subscription_cost > 0:
-        info_text += texts.t(
-            'SUBSCRIPTION_INFO_MONTHLY_COST',
-            '\n💰 <b>Стоимость подписки в месяц:</b> {price}',
-        ).format(price=texts.format_price(subscription_cost))
-
-    # Отображаем докупленный трафик
-    if (subscription.traffic_limit_gb or 0) > 0:  # Только для лимитированных тарифов
-        from sqlalchemy import select as sql_select
-
-        from app.database.models import TrafficPurchase
-
-        now = datetime.now(UTC)
-        purchases_query = (
-            sql_select(TrafficPurchase)
-            .where(TrafficPurchase.subscription_id == subscription.id)
-            .where(TrafficPurchase.expires_at > now)
-            .order_by(TrafficPurchase.expires_at.asc())
-        )
-        purchases_result = await db.execute(purchases_query)
-        purchases = purchases_result.scalars().all()
-
-        if purchases:
-            info_text += texts.t('SUBSCRIPTION_INFO_PURCHASED_TRAFFIC_TITLE', '\n\n📦 <b>Докупленный трафик:</b>')
-
-            for purchase in purchases:
-                time_remaining = purchase.expires_at - now
-                days_remaining = max(0, int(time_remaining.total_seconds() / 86400))
-
-                # Генерируем прогресс-бар
-                total_duration_seconds = (purchase.expires_at - purchase.created_at).total_seconds()
-                elapsed_seconds = (now - purchase.created_at).total_seconds()
-                progress_percent = min(
-                    100.0,
-                    max(0.0, (elapsed_seconds / total_duration_seconds * 100) if total_duration_seconds > 0 else 0),
-                )
-
-                bar_length = 10
-                filled = int((progress_percent / 100) * bar_length)
-                bar = '▰' * filled + '▱' * (bar_length - filled)
-
-                # Форматируем дату истечения
-                expire_date = purchase.expires_at.strftime('%d.%m.%Y')
-
-                # Формируем текст о времени
-                if days_remaining == 0:
-                    time_text = texts.t('SUBSCRIPTION_INFO_PURCHASED_EXPIRES_TODAY', 'истекает сегодня')
-                elif days_remaining == 1:
-                    time_text = texts.t('SUBSCRIPTION_INFO_PURCHASED_ONE_DAY_LEFT', 'остался 1 день')
-                elif days_remaining < 5:
-                    time_text = texts.t('SUBSCRIPTION_INFO_PURCHASED_FEW_DAYS_LEFT', 'осталось {days} дня').format(
-                        days=days_remaining
-                    )
-                else:
-                    time_text = texts.t('SUBSCRIPTION_INFO_PURCHASED_MANY_DAYS_LEFT', 'осталось {days} дней').format(
-                        days=days_remaining
-                    )
-
-                info_text += texts.t(
-                    'SUBSCRIPTION_INFO_PURCHASED_TRAFFIC_ITEM', '\n• {traffic_gb} ГБ — {time_text}'
-                ).format(
-                    traffic_gb=purchase.traffic_gb,
-                    time_text=time_text,
-                )
-                info_text += texts.t(
-                    'SUBSCRIPTION_INFO_PURCHASED_TRAFFIC_PROGRESS',
-                    '\n  {bar} {percent}% | до {expire_date}',
-                ).format(
-                    bar=bar,
-                    percent=f'{progress_percent:.0f}',
-                    expire_date=expire_date,
-                )
-
-    if subscription_url and subscription_url != 'Генерируется...' and not settings.should_hide_subscription_link():
-        info_text += texts.t(
-            'SUBSCRIPTION_INFO_IMPORT_LINK',
-            '\n\n🔗 <b>Ваша ссылка для импорта в VPN приложениe:</b>\n<code>{url}</code>',
-        ).format(url=subscription_url)
-
-    return info_text
