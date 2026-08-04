@@ -240,6 +240,7 @@ class BotConfigStates(StatesGroup):
 
 class CustomEmojiStates(StatesGroup):
     waiting_for_pack_link = State()
+    waiting_for_alias_pair = State()
 
 
 class PricingStates(StatesGroup):

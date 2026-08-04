@@ -1,18 +1,23 @@
 """Рантайм-настройка паков кастомных эмодзи: ссылка из админки -> активная карта.
 
 Карта эмодзи собирается из стикер-паков Telegram по требованию администратора и
-подменяет встроенный ассет `assets/custom_emoji/map.json` без редеплоя.
+подменяет встроенный ассет `assets/custom_emoji/map.json` без редеплоя. Слой
+алиасов (`assets/custom_emoji/aliases.json`) точно так же перекрывается правками
+оператора: в настройке лежит ПОЛНАЯ карта алиасов, поэтому вредный алиас можно
+именно УДАЛИТЬ, а не только добавить новый.
 Состояние хранится в `system_settings` (миграция не нужна — ключи произвольные).
 """
 
+import json
 import re
 import unicodedata
+from collections.abc import Mapping
 from typing import Any, Final
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.crud.system_setting import get_setting_value, upsert_system_setting
+from app.database.crud.system_setting import delete_system_setting, get_setting_value, upsert_system_setting
 from app.utils.custom_emoji import (
     build_mapping,
     get_mapping,
@@ -28,6 +33,7 @@ logger = structlog.get_logger(__name__)
 
 CUSTOM_EMOJI_PACKS_KEY: Final[str] = 'custom_emoji_packs'
 CUSTOM_EMOJI_ENABLED_KEY: Final[str] = 'custom_emoji_enabled'
+CUSTOM_EMOJI_ALIASES_KEY: Final[str] = 'custom_emoji_aliases'
 
 PACK_NAME_RE: Final[re.Pattern[str]] = re.compile(r'^[A-Za-z0-9_]{1,64}$')
 _EMOJI_ID_RE: Final[re.Pattern[str]] = re.compile(r'^\d{1,32}$')
@@ -45,8 +51,18 @@ _LINK_PREFIXES: Final[tuple[str, ...]] = (
 )
 
 
+_ALIAS_SEPARATORS: Final[tuple[str, ...]] = ('->', '=>', '\u2192', '=')
+
+#: Правки алиасов оператором. None -> действует встроенный `aliases.json`.
+_aliases_override: dict[str, str] | None = None
+
+
 class PackError(Exception):
     """Базовая ошибка работы с паком кастомных эмодзи."""
+
+
+class AliasError(Exception):
+    """Алиас отвергнут. Сообщение готово к показу оператору как есть."""
 
 
 class PackLinkError(PackError):
@@ -131,9 +147,36 @@ def _is_math_symbol_key(key: str) -> bool:
     return all(unicodedata.category(char) == 'Sm' for char in key)
 
 
+def _has_non_emoji_character(key: str) -> bool:
+    """Буква, пробел или управляющий символ в ключе — тот же отказ Telegram, что и у `→`, только хуже.
+
+    Ключ `a` обернул бы в `<tg-emoji>` КАЖДУЮ букву `a` в тексте и положил бы всё подряд.
+    Цифры не запрещены: они законная часть keycap-последовательности (`1` + U+20E3 = 1⃣).
+    """
+    return any(unicodedata.category(char)[0] in ('L', 'Z', 'C') for char in key)
+
+
+def set_aliases_override(value: Mapping[str, str] | None) -> None:
+    """Записать активную карту алиасов (None = отдать решение встроенному файлу)."""
+    global _aliases_override
+    _aliases_override = dict(value) if value is not None else None
+
+
+def get_aliases_override() -> dict[str, str] | None:
+    """Прочитать правки оператора из памяти — без похода в БД (горячий путь сборки карты)."""
+    return dict(_aliases_override) if _aliases_override is not None else None
+
+
+def get_effective_aliases() -> dict[str, str]:
+    """Активная карта алиасов: правки оператора, иначе встроенный ассет образа."""
+    if _aliases_override is not None:
+        return dict(_aliases_override)
+    return load_aliases()
+
+
 def _apply_aliases(mapping: dict[str, str]) -> None:
     """Слой пак-независимых замен: алиас получает id цели, если та есть, а алиаса ещё нет."""
-    for alias, target in load_aliases().items():
+    for alias, target in get_effective_aliases().items():
         if alias in mapping:
             continue
         # Telegram валидирует ТЕКСТ entity, а не id: если сам ключ-алиас не эмодзи
@@ -147,6 +190,135 @@ def _apply_aliases(mapping: dict[str, str]) -> None:
         target_id = mapping.get(target)
         if target_id is not None:
             mapping[alias] = target_id
+
+
+def parse_alias_pair(raw: Any) -> tuple[str, str] | None:
+    """Разобрать ввод оператора «эмодзи -> эмодзи» в пару ключ/цель."""
+    if not isinstance(raw, str):
+        return None
+
+    text = raw
+    for separator in _ALIAS_SEPARATORS:
+        text = text.replace(separator, ' ')
+
+    parts = text.split()
+    if len(parts) != 2:
+        return None
+
+    alias, target = (part.replace(_VS16, '') for part in parts)
+    return (alias, target) if alias and target else None
+
+
+def validate_aliases(aliases: Mapping[str, str]) -> dict[str, str]:
+    """Проверить ПОЛНУЮ карту алиасов перед записью. Бросает `AliasError` с готовым текстом.
+
+    Гард на ключ-математический-символ живёт здесь, а не только в `_apply_aliases`:
+    иначе оператор мог бы вернуть через админку тот самый `→`, который клал весь бот.
+    """
+    clean: dict[str, str] = {}
+    for raw_alias, raw_target in aliases.items():
+        alias = raw_alias.replace(_VS16, '') if isinstance(raw_alias, str) else ''
+        target = raw_target.replace(_VS16, '') if isinstance(raw_target, str) else ''
+
+        if not alias or not target:
+            raise AliasError('Пустой ключ или пустая цель алиаса.')
+        if _is_math_symbol_key(alias):
+            raise AliasError(
+                f'Ключ «{alias}» — математический символ, а не эмодзи. Telegram проверяет ТЕКСТ '
+                f'кастомного эмодзи и отвергает всё сообщение целиком (ENTITY_TEXT_INVALID). '
+                f'Возьмите эмодзи-вариант символа.'
+            )
+        if _has_non_emoji_character(alias):
+            raise AliasError(
+                f'Ключ «{alias}» содержит букву, пробел или служебный символ — это не эмодзи. '
+                f'Telegram проверяет ТЕКСТ кастомного эмодзи и отвергнет всё сообщение целиком '
+                f'(ENTITY_TEXT_INVALID) везде, где встретится этот символ.'
+            )
+        if alias == target:
+            raise AliasError(f'Алиас «{alias}» указывает сам на себя.')
+        clean[alias] = target
+
+    return clean
+
+
+async def get_aliases(db: AsyncSession) -> dict[str, str]:
+    """Прочитать активную карту алиасов. Настройки нет -> встроенный файл, БД при этом НЕ засевается.
+
+    Пустая сохранённая карта (`{}`) — законное состояние «оператор снёс все алиасы»,
+    а не «настройки нет»: именно поэтому проверяется `raw is None`, а не пустота карты.
+    """
+    raw = await get_setting_value(db, CUSTOM_EMOJI_ALIASES_KEY)
+    if raw is None:
+        return load_aliases()
+
+    try:
+        payload = json.loads(raw)
+    except ValueError as error:
+        logger.warning('Сохранённая карта алиасов не читается, берём встроенную', error=str(error))
+        return load_aliases()
+
+    if not isinstance(payload, dict):
+        logger.warning('Сохранённая карта алиасов имеет неверный формат, берём встроенную')
+        return load_aliases()
+
+    return {
+        alias.replace(_VS16, ''): target.replace(_VS16, '')
+        for alias, target in payload.items()
+        if isinstance(alias, str) and isinstance(target, str) and alias.replace(_VS16, '') and target.replace(_VS16, '')
+    }
+
+
+async def is_aliases_customized(db: AsyncSession) -> bool:
+    """Правил ли алиасы оператор (иначе действует файл из образа)."""
+    return await get_setting_value(db, CUSTOM_EMOJI_ALIASES_KEY) is not None
+
+
+async def save_aliases(db: AsyncSession, aliases: Mapping[str, str]) -> dict[str, str]:
+    """Записать ПОЛНУЮ карту алиасов и сразу обновить рантайм-кеш."""
+    clean = validate_aliases(aliases)
+    await upsert_system_setting(
+        db,
+        CUSTOM_EMOJI_ALIASES_KEY,
+        json.dumps(clean, ensure_ascii=False, sort_keys=True),
+        description='Алиасы кастомных эмодзи, полная карта (настройки нет = встроенный aliases.json)',
+    )
+    set_aliases_override(clean)
+    return clean
+
+
+async def add_alias(db: AsyncSession, alias: str, target: str) -> dict[str, str]:
+    """Добавить алиас поверх текущей карты.
+
+    Неизвестная цель НЕ блокируется: `_apply_aliases` подставляет id только когда цель
+    есть в карте, поэтому такой алиас инертен и станет рабочим, когда приедет нужный пак.
+    Вредным бывает КЛЮЧ (его текст уходит в entity) — его и отвергаем жёстко.
+    """
+    key = alias.replace(_VS16, '').strip()
+    value = target.replace(_VS16, '').strip()
+
+    current = await get_aliases(db)
+    if key in current:
+        raise AliasError(f'Алиас «{key}» уже задан: сначала удалите его.')
+
+    return await save_aliases(db, {**current, key: value})
+
+
+async def remove_alias(db: AsyncSession, alias: str) -> dict[str, str]:
+    """Убрать алиас из карты. Именно это спасает от вредного алиаса без редеплоя."""
+    key = alias.replace(_VS16, '').strip()
+
+    current = await get_aliases(db)
+    if key not in current:
+        raise AliasError(f'Алиаса «{key}» нет в текущей карте.')
+
+    return await save_aliases(db, {name: value for name, value in current.items() if name != key})
+
+
+async def reset_aliases(db: AsyncSession) -> dict[str, str]:
+    """Стереть правки оператора: возвращается ровно содержимое `assets/custom_emoji/aliases.json`."""
+    await delete_system_setting(db, CUSTOM_EMOJI_ALIASES_KEY)
+    set_aliases_override(None)
+    return load_aliases()
 
 
 def compute_coverage(mapping: dict[str, str]) -> dict[str, int]:
@@ -230,6 +402,8 @@ async def load_and_apply(bot: Any, db: AsyncSession) -> dict[str, Any]:
         raw_enabled = await get_setting_value(db, CUSTOM_EMOJI_ENABLED_KEY)
         if raw_enabled is not None:
             set_enabled_override(raw_enabled.strip() == '1')
+
+        set_aliases_override(await get_aliases(db))
 
         names = await get_pack_names(db)
         if not names:
