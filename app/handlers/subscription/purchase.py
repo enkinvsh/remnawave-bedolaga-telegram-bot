@@ -283,6 +283,10 @@ async def build_subscription_overview_text(user: User, texts, db: AsyncSession, 
         actual_status = 'expired'
         status_display = texts.t('SUBSCRIPTION_STATUS_EXPIRED', 'Истекла')
         status_emoji = '🔴'
+    elif subscription.status == SubscriptionStatus.TRIAL.value and subscription.end_date > current_time:
+        actual_status = 'trial_active'
+        status_display = texts.t('SUBSCRIPTION_STATUS_TRIAL', 'Тестовая')
+        status_emoji = '🎯'
     elif subscription.status == 'active' and subscription.end_date > current_time:
         if subscription.is_trial:
             actual_status = 'trial_active'

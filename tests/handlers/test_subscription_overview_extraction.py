@@ -175,11 +175,24 @@ async def test_header_line_comes_from_the_overview_template(texts):
     assert 'Информация о подписке' in texts.SUBSCRIPTION_OVERVIEW_TEMPLATE
 
 
-async def test_trial_status_and_type():
-    result = await _run_handler(_user(_subscription(is_trial=True)))
+@pytest.mark.parametrize('status', ['trial', 'active'])
+async def test_trial_status_and_type(status):
+    """Триал распознаётся по любому из двух написаний статуса.
+
+    Строку со ``status == 'trial'`` ветка статуса раньше не знала и показывала
+    живому триальщику «❓ Неизвестно» — при том что «🎭 Тип» ниже говорил «Триал».
+    """
+    result = await _run_handler(_user(_subscription(status=status, is_trial=True)))
 
     assert '📱 Подписка: 🎯 Тестовая' in result
     assert '🎭 Тип: Триал' in result
+
+
+async def test_unknown_status_stays_unknown():
+    """Починка триала не должна съесть саму ветку «Неизвестно»."""
+    result = await _run_handler(_user(_subscription(status='pending')))
+
+    assert '📱 Подписка: ❓ Неизвестно' in result
 
 
 async def test_expired_status():

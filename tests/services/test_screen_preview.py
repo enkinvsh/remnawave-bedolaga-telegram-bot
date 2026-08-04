@@ -433,19 +433,21 @@ async def test_subscription_screen_states_change_the_status_string(state, status
     assert status_key in rendered, rendered
 
 
-async def test_status_trial_row_falls_through_to_unknown():
-    """Фиксируем ПОВЕДЕНИЕ БОТА, а не желаемое: подписка со status='trial'.
+async def test_status_trial_row_renders_as_trial():
+    """Подписка со ``status == 'trial'`` показывает статус «Тестовая».
 
-    Ветка статуса на этом экране распознаёт триал только как
-    ``status == 'active' and is_trial``; строка со ``status == 'trial'``
-    проваливается в SUBSCRIPTION_STATUS_UNKNOWN. Это предсуществующее поведение
-    хендлера — здесь оно не чинится, чтобы не менять то, что видит юзер.
-    Тип подписки при этом определяется по ``is_trial`` и остаётся «Триал».
+    Был баг: ветка статуса распознавала триал только как
+    ``status == 'active' and is_trial``, поэтому строка со
+    ``status == SubscriptionStatus.TRIAL.value`` проваливалась в
+    SUBSCRIPTION_STATUS_UNKNOWN. Живой триальщик видел «❓ Неизвестно» и тут же
+    ниже — «🎭 Тип: Триал», то есть экран противоречил сам себе. Теперь триал
+    распознаётся по любому из двух признаков.
     """
     payload = await render_screen('subscription', 'ru', _EmptySession(), state='trial')
 
     rendered = [entry['key'] for entry in payload['keys'] if entry['rendered']]
-    assert 'SUBSCRIPTION_STATUS_UNKNOWN' in rendered
+    assert 'SUBSCRIPTION_STATUS_TRIAL' in rendered
+    assert 'SUBSCRIPTION_STATUS_UNKNOWN' not in rendered
     assert 'SUBSCRIPTION_TYPE_TRIAL' in rendered
 
 
