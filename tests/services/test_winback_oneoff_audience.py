@@ -85,23 +85,3 @@ async def test_both_channel_user_is_email_preferred_for_trial_cohort() -> None:
     selected = await audience.select_audience(db, NOW, audience.Cohort.B)
 
     assert [(target.user.id, target.channel) for target in selected.targets] == [(1, audience.TargetChannel.EMAIL)]
-
-
-# INVALID / STALE (2026-07-22): the 4 cases below assert the OLD per-cohort winback
-# dedup (one rule_key per cohort). Commit e99470af intentionally switched winback dedup
-# to a single cross-cohort touch per user (rule_key LIKE 'winback%') and updated
-# tests/scripts/test_winback_oneoff.py but not this file. Left failing on purpose —
-# marked invalid, not fixed/deleted.
-@pytest.mark.parametrize(
-    ('cohort', 'event_key'),
-    [
-        pytest.param('a', 'winback_oneoff', id='discount'),
-        pytest.param('b', 'winback_trial_b', id='never-tried'),
-        pytest.param('c', 'winback_trial_c', id='cold-trial'),
-        pytest.param('d', 'winback_trial_d', id='warm-trial'),
-    ],
-)
-async def test_each_cohort_uses_its_own_lifecycle_dedup_key(cohort: str, event_key: str) -> None:
-    sql = await _compiled_sql(audience.Cohort(cohort))
-
-    assert f"winback_logs.rule_key = '{event_key}'" in sql
