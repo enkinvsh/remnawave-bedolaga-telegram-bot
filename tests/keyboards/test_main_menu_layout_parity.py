@@ -17,11 +17,19 @@
 `text` / `callback_data` / `url` / `web_app.url` / `icon_custom_emoji_id`.
 Перенос кнопки в соседний ряд — такое же расхождение, как её пропажа.
 
-ТЕКУЩИЙ СТАТУС: ПАРИТЕТА НЕТ НИ В ОДНОМ СЦЕНАРИИ.
-Поэтому все тесты помечены `xfail(strict=True)`, а в `reason` записано конкретное
-расхождение. Это НЕ фиксация расхождения как правильного поведения: как только
-кто-то починит паритет, strict-xfail упадёт с XPASS и заставит снять маркер.
-До тех пор файл документирует, что флаг включать нельзя.
+ТЕКУЩИЙ СТАТУС: ПОДПИСИ СОВПАДАЮТ, СТРУКТУРА — ЕЩЁ НЕТ.
+Расхождение подписей закрыто: встроенные кнопки конструктора берут текст из слоя
+локализации по `text_key` (`app/services/menu_layout/constants.py`), поэтому
+сценарии, отличавшиеся ТОЛЬКО словами на кнопках, теперь проходят — включая локали
+fa/zh/ua, которым конфигурация раньше подсовывала английский.
+
+Оставшиеся тесты помечены `xfail(strict=True)`, и в `reason` записано конкретное
+СТРУКТУРНОЕ расхождение: порядок рядов, пропажа «Докупить трафик» в режиме тарифов,
+воскресшая кнопка корзины, разная группировка кнопок по рядам, режим
+`MAIN_MENU_MODE=cabinet`, кнопка активации, мастер-переключатель конкурсов и
+игнорируемые `custom_buttons`. Это НЕ фиксация расхождения как правильного
+поведения: как только кто-то починит паритет, strict-xfail упадёт с XPASS и
+заставит снять маркер. До тех пор файл документирует, что флаг включать нельзя.
 
 Граблю знать обязательно: `MenuLayoutService._cache` — КЛАССОВЫЙ глобал, поэтому
 фикстура инвалидирует его до и после каждого теста, иначе конфигурация протекает
@@ -153,36 +161,14 @@ async def _assert_parity(db: _FakeDB, monkeypatch: pytest.MonkeyPatch, language:
 # Сценарии подобраны так, чтобы менялся НАБОР показываемых кнопок. `reason` у
 # каждого — конкретное расхождение, снятое с реального рендера обеих веток.
 
-_LABELS_RU = (
-    'подписи из конфигурации не совпадают с локалью: '
-    "'🧪 Тестовая подписка'/'🎁 Пробный период', '💎 Купить подписку'/'🛒 Купить подписку', "
-    "'🎫 Промокод'/'🎟️ Промокод', '🤝 Партнерка'/'👥 Рефералы', '🛠️ Техподдержка'/'💬 Поддержка'"
-)
-
-_LABELS_EN = (
-    'подписи из конфигурации не совпадают с локалью: '
-    "'🎁 Trial subscription'/'🎁 Free trial', '💎 Buy subscription'/'🛒 Buy subscription', "
-    "'🎫 Promo code'/'🎟️ Promo code', '🤝 Referral program'/'👥 Referrals', '🛠️ Support'/'💬 Support'"
-)
-
 _ROW_SWAP = (
     'ряд «Баланс» переезжает с позиции 1 на позицию 2 — конструктор ставит '
     'ряд «Подписка» ПЕРЕД балансом, текущее меню — ПОСЛЕ'
 )
 
 SCENARIOS = [
-    pytest.param(
-        'ru',
-        {},
-        id='new_user-ru',
-        marks=pytest.mark.xfail(strict=True, reason=f'Новый пользователь, ru: {_LABELS_RU}'),
-    ),
-    pytest.param(
-        'en',
-        {},
-        id='new_user-en',
-        marks=pytest.mark.xfail(strict=True, reason=f'Новый пользователь, en: {_LABELS_EN}'),
-    ),
+    pytest.param('ru', {}, id='new_user-ru'),
+    pytest.param('en', {}, id='new_user-en'),
     pytest.param(
         'ru',
         {
@@ -198,8 +184,7 @@ SCENARIOS = [
                 'остаток кнопок в общий поток по 2 и даёт пары '
                 '[Подписка, Промокод] / [Партнерка, Техподдержка] / [Инфо, Язык], '
                 'а конструктор держит семантические ряды '
-                '[Подписка] / [Промокод, Рефералы] / [Поддержка, Инфо] / [Язык]; '
-                f'плюс {_LABELS_RU}'
+                '[Подписка] / [Промокод, Партнерка] / [Техподдержка, Инфо] / [Язык]'
             ),
         ),
     ),
@@ -218,7 +203,7 @@ SCENARIOS = [
                 f'Активная платная подписка, ru: {_ROW_SWAP}; при SALES_MODE=tariffs '
                 "конструктор ВООБЩЕ не показывает '📈 Докупить трафик' (условие "
                 'traffic_topup_enabled жёстко запрещает докупку в режиме тарифов), '
-                f'а текущее меню её показывает; плюс {_LABELS_RU}'
+                'а текущее меню её показывает'
             ),
         ),
     ),
@@ -233,11 +218,7 @@ SCENARIOS = [
         id='active_paid-en',
         marks=pytest.mark.xfail(
             strict=True,
-            reason=(
-                f'Активная платная подписка, en: {_ROW_SWAP}; '
-                "'📈 Buy more traffic' пропадает в режиме тарифов; "
-                f"'📱 Subscription' против '📊 Subscription'; плюс {_LABELS_EN}"
-            ),
+            reason=(f"Активная платная подписка, en: {_ROW_SWAP}; '📈 Buy more traffic' пропадает в режиме тарифов"),
         ),
     ),
     pytest.param(
@@ -249,20 +230,12 @@ SCENARIOS = [
             reason=(
                 'Истёкшая подписка (платил раньше), ru: текущее меню склеивает '
                 '[Купить подписку, Промокод] / [Партнерка, Техподдержка] / [Инфо, Язык], '
-                'конструктор даёт [Купить подписку] / [Промокод, Рефералы] / '
-                f'[Поддержка, Инфо] / [Язык]; плюс {_LABELS_RU}'
+                'конструктор даёт [Купить подписку] / [Промокод, Партнерка] / '
+                '[Техподдержка, Инфо] / [Язык]'
             ),
         ),
     ),
-    pytest.param(
-        'ru',
-        {'balance_kopeks': 150000},
-        id='balance_positive-ru',
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason=(f"Ненулевой баланс, ru: сама кнопка баланса совпадает ('💰 Баланс: 1500 ₽'), но {_LABELS_RU}"),
-        ),
-    ),
+    pytest.param('ru', {'balance_kopeks': 150000}, id='balance_positive-ru'),
     pytest.param(
         'ru',
         {'has_saved_cart': True, 'show_resume_checkout': True},
@@ -272,29 +245,12 @@ SCENARIOS = [
             reason=(
                 'Сохранённая корзина, ru: конструктор ВОЗВРАЩАЕТ в главное меню кнопку '
                 "'↩️ Вернуться к оформлению' -> return_to_saved_cart, которую из главного "
-                'меню намеренно убрали и перенесли на экран «Баланс»; '
-                f'плюс {_LABELS_RU}'
+                'меню намеренно убрали и перенесли на экран «Баланс»'
             ),
         ),
     ),
-    pytest.param(
-        'ru',
-        {'is_admin': True},
-        id='admin-ru',
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason=(f"Админ, ru: '⚙️ Админ-панель' против '⚙️ Админ панель' (нет дефиса); плюс {_LABELS_RU}"),
-        ),
-    ),
-    pytest.param(
-        'ru',
-        {'is_moderator': True},
-        id='moderator-ru',
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason=(f"Модератор, ru: сама кнопка '🧑\u200d⚖️ Модерация' совпадает, но {_LABELS_RU}"),
-        ),
-    ),
+    pytest.param('ru', {'is_admin': True}, id='admin-ru'),
+    pytest.param('ru', {'is_moderator': True}, id='moderator-ru'),
 ]
 
 
@@ -313,15 +269,6 @@ async def test_main_menu_parity(db, monkeypatch, language: str, kwargs: dict[str
 
 
 @pytest.mark.parametrize('language', ['fa', 'zh', 'ua'])
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        'DEFAULT_MENU_CONFIG содержит подписи только для ru и en, поэтому '
-        '_get_localized_text откатывается на en: пользователь с локалью fa/zh/ua '
-        'вместо своего языка увидит английские кнопки (Balance / Free trial / '
-        'Buy subscription / Promo code / Referrals / Support / Info / Language)'
-    ),
-)
 async def test_main_menu_parity_for_non_ru_en_locales(db, monkeypatch, language: str) -> None:
     """Локали без словаря в конфигурации не должны молча становиться английскими."""
     await _assert_parity(db, monkeypatch, language)
@@ -395,8 +342,8 @@ async def test_main_menu_parity_respects_contests_master_switch(db, monkeypatch)
     strict=True,
     reason=(
         'Простая покупка: текущее меню кладёт кнопку в общий поток по 2 в паре с '
-        "промокодом и подписывает её '⚡ Простая покупка' из локали, конструктор "
-        "выносит её в отдельный ряд max_per_row=1 с подписью '💳 Простая подписка'"
+        'промокодом, конструктор выносит её в отдельный ряд max_per_row=1 и сдвигает '
+        'этим все следующие пары'
     ),
 )
 async def test_main_menu_parity_with_simple_subscription(db, monkeypatch) -> None:

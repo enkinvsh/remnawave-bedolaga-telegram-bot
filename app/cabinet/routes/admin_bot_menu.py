@@ -96,7 +96,10 @@ def _build_config(payload: MenuLayoutUpdateRequest, current: dict) -> dict:
             button_dict = button.model_dump(mode='json')
             # Плейсхолдеры определяем автоматически, если dynamic_text не выставлен явно
             if not button_dict.get('dynamic_text', False):
-                button_dict['dynamic_text'] = MenuLayoutService._text_has_placeholders(button_dict.get('text', {}))
+                button_dict['dynamic_text'] = MenuLayoutService._text_has_placeholders(
+                    button_dict.get('text', {}),
+                    button_dict.get('text_key'),
+                )
             buttons_config[button_id] = button_dict
         config['buttons'] = buttons_config
 

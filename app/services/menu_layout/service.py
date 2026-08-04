@@ -1050,18 +1050,22 @@ class MenuLayoutService:
     )
 
     @classmethod
-    def _text_has_placeholders(cls, text_config: dict[str, str]) -> bool:
-        """Проверить, содержит ли текст динамические плейсхолдеры."""
-        if not text_config or not isinstance(text_config, dict):
-            return False
+    def _text_has_placeholders(cls, text_config: dict[str, str], text_key: str | None = None) -> bool:
+        """Проверить, содержит ли подпись динамические плейсхолдеры.
 
-        for lang_text in text_config.values():
-            if not isinstance(lang_text, str):
-                continue
-            for placeholder in cls._PLACEHOLDERS:
-                if placeholder in lang_text:
-                    return True
-        return False
+        `text_key` обязателен для встроенных кнопок: их подпись живёт в локали, а не в
+        `text`, и без него автоопределение проглядело бы `{balance}` и сохранило бы
+        кнопку баланса как статическую — пользователь увидел бы сырое «{balance}».
+        """
+        candidates: list[str] = []
+        if isinstance(text_config, dict):
+            candidates.extend(value for value in text_config.values() if isinstance(value, str))
+        if text_key:
+            localized = get_texts().get(text_key)
+            if isinstance(localized, str):
+                candidates.append(localized)
+
+        return any(placeholder in candidate for candidate in candidates for placeholder in cls._PLACEHOLDERS)
 
     @classmethod
     def _get_localized_text(
@@ -1081,6 +1085,42 @@ class MenuLayoutService:
         if text_config:
             return next(iter(text_config.values()))
         return ''
+
+    @classmethod
+    def _resolve_button_text(
+        cls,
+        button_config: dict[str, Any],
+        language: str,
+        texts: Any,
+    ) -> str:
+        """Подпись кнопки: явная правка админа -> локаль по `text_key` -> литерал конфигурации.
+
+        У встроенной кнопки подпись принадлежит слою локализации: тот же ключ читает
+        текущее меню, и через него же работают `locale_overrides` тенанта и языки помимо
+        ru/en. Литеральный `text` остаётся каналом ЯВНОЙ правки из конструктора и
+        перебивает локаль, иначе редактор подписей стал бы бесполезен.
+
+        Проверяется ТОЛЬКО точное совпадение языка: если админ переписал подпись на ru,
+        англичанин обязан и дальше видеть локаль, а не русскую строку. Поэтому здесь нет
+        отката на соседний язык, который делает `_get_localized_text`.
+
+        Кнопка без `text_key` (кастомная или встроенная без эквивалента в локалях) целиком
+        идёт по старому пути — её `text` авторитетен.
+        """
+        text_config = button_config.get('text') or {}
+        text_key = button_config.get('text_key')
+        if not text_key:
+            return cls._get_localized_text(text_config, language)
+
+        explicit = text_config.get(language)
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit
+
+        localized = texts.get(text_key)
+        if isinstance(localized, str) and localized:
+            return localized
+
+        return cls._get_localized_text(text_config, language)
 
     @classmethod
     def _format_dynamic_text(
@@ -1145,7 +1185,6 @@ class MenuLayoutService:
         button_type = button_config.get('type', 'builtin')
         # Используем переданный button_id или fallback на builtin_id
         effective_button_id = button_id or button_config.get('builtin_id', '')
-        text_config = button_config.get('text', {})
         action = button_config.get('action', '')
         open_mode = button_config.get('open_mode', 'callback')
         webapp_url = button_config.get('webapp_url')
@@ -1171,7 +1210,7 @@ class MenuLayoutService:
             )
 
         # Получаем текст
-        text = cls._get_localized_text(text_config, context.language)
+        text = cls._resolve_button_text(button_config, context.language, texts)
         if not text:
             return None
 
@@ -1335,8 +1374,7 @@ class MenuLayoutService:
                 if not cls._evaluate_conditions(button_conditions, context):
                     continue
 
-                text_config = button_cfg.get('text', {})
-                text = cls._get_localized_text(text_config, context.language)
+                text = cls._resolve_button_text(button_cfg, context.language, texts)
 
                 if button_cfg.get('dynamic_text'):
                     text = cls._format_dynamic_text(text, context, texts)

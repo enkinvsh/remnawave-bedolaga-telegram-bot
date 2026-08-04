@@ -1,4 +1,20 @@
-"""Константы для конструктора меню."""
+"""Константы для конструктора меню.
+
+ПОДПИСИ ВСТРОЕННЫХ КНОПОК ЖИВУТ В ЛОКАЛЯХ, А НЕ ЗДЕСЬ.
+У каждой встроенной кнопки есть `text_key` — ровно тот ключ локализации, который
+читает текущее (легаси) меню в `app/keyboards/inline.py::get_main_menu_keyboard`.
+Поэтому `text` у таких кнопок ПУСТОЙ: непустой словарь означает «админ явно
+переписал подпись в конструкторе» и перебивает локаль (см.
+`MenuLayoutService._resolve_button_text`). Если бы здесь остались литералы,
+конструктор считал бы их админской правкой и намертво прибивал бы: язык
+пользователя (в конфигурации были только ru и en), `locale_overrides` тенанта из
+редактора локалей и сами тексты локалей.
+
+Кнопки без `text_key` — те, у которых в легаси-меню НЕТ эквивалента с ключом
+локализации: `resume_checkout` (из главного меню убрана и живёт на экране
+«Баланс») и `moderator_panel` (легаси хардкодит '🧑‍⚖️ Модерация' строкой).
+Ключ им не выдуман: подпись остаётся литеральной, как у кастомных кнопок.
+"""
 
 from typing import Any
 
@@ -93,7 +109,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'connect': {
             'type': 'builtin',
             'builtin_id': 'connect',
-            'text': {'ru': '🔗 Подключиться', 'en': '🔗 Connect'},
+            'text': {},
+            'text_key': 'CONNECT_BUTTON',
             'action': 'subscription_connect',
             'enabled': True,
             'visibility': 'subscribers',
@@ -105,7 +122,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'happ_download': {
             'type': 'builtin',
             'builtin_id': 'happ_download',
-            'text': {'ru': '⬇️ Скачать Happ', 'en': '⬇️ Download Happ'},
+            'text': {},
+            'text_key': 'HAPP_DOWNLOAD_BUTTON',
             'action': 'subscription_happ_download',
             'enabled': True,
             'visibility': 'subscribers',
@@ -115,7 +133,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'subscription': {
             'type': 'builtin',
             'builtin_id': 'subscription',
-            'text': {'ru': '📊 Подписка', 'en': '📊 Subscription'},
+            'text': {},
+            'text_key': 'MENU_SUBSCRIPTION',
             'action': 'menu_subscription',
             'enabled': True,
             'visibility': 'subscribers',
@@ -125,7 +144,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'buy_traffic': {
             'type': 'builtin',
             'builtin_id': 'buy_traffic',
-            'text': {'ru': '📈 Докупить трафик', 'en': '📈 Buy traffic'},
+            'text': {},
+            'text_key': 'BUY_TRAFFIC_BUTTON',
             'action': 'buy_traffic',
             'enabled': True,
             'visibility': 'subscribers',
@@ -135,7 +155,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'balance': {
             'type': 'builtin',
             'builtin_id': 'balance',
-            'text': {'ru': '💰 Баланс: {balance}', 'en': '💰 Balance: {balance}'},
+            'text': {},
+            'text_key': 'BALANCE_BUTTON',
             'action': 'menu_balance',
             'enabled': True,
             'visibility': 'all',
@@ -145,7 +166,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'trial': {
             'type': 'builtin',
             'builtin_id': 'trial',
-            'text': {'ru': '🎁 Пробный период', 'en': '🎁 Free trial'},
+            'text': {},
+            'text_key': 'MENU_TRIAL',
             'action': 'menu_trial',
             'enabled': True,
             'visibility': 'all',
@@ -155,7 +177,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'buy_subscription': {
             'type': 'builtin',
             'builtin_id': 'buy_subscription',
-            'text': {'ru': '🛒 Купить подписку', 'en': '🛒 Buy subscription'},
+            'text': {},
+            'text_key': 'MENU_BUY_SUBSCRIPTION',
             'action': 'menu_buy',
             'enabled': True,
             'visibility': 'all',
@@ -165,7 +188,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'simple_subscription': {
             'type': 'builtin',
             'builtin_id': 'simple_subscription',
-            'text': {'ru': '💳 Простая подписка', 'en': '💳 Simple subscription'},
+            'text': {},
+            'text_key': 'MENU_SIMPLE_SUBSCRIPTION',
             'action': 'simple_subscription_purchase',
             'enabled': True,
             'visibility': 'all',
@@ -175,7 +199,9 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'resume_checkout': {
             'type': 'builtin',
             'builtin_id': 'resume_checkout',
+            # Ключа локализации нет: в легаси-меню этой кнопки больше нет вообще.
             'text': {'ru': '↩️ Вернуться к оформлению', 'en': '↩️ Resume checkout'},
+            'text_key': None,
             'action': 'return_to_saved_cart',
             'enabled': True,
             'visibility': 'all',
@@ -185,7 +211,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'promocode': {
             'type': 'builtin',
             'builtin_id': 'promocode',
-            'text': {'ru': '🎟️ Промокод', 'en': '🎟️ Promo code'},
+            'text': {},
+            'text_key': 'MENU_PROMOCODE',
             'action': 'menu_promocode',
             'enabled': True,
             'visibility': 'all',
@@ -195,7 +222,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'referrals': {
             'type': 'builtin',
             'builtin_id': 'referrals',
-            'text': {'ru': '👥 Рефералы', 'en': '👥 Referrals'},
+            'text': {},
+            'text_key': 'MENU_REFERRALS',
             'action': 'menu_referrals',
             'enabled': True,
             'visibility': 'all',
@@ -205,7 +233,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'contests': {
             'type': 'builtin',
             'builtin_id': 'contests',
-            'text': {'ru': '🎲 Конкурсы', 'en': '🎲 Contests'},
+            'text': {},
+            'text_key': 'CONTESTS_BUTTON',
             'action': 'contests_menu',
             'enabled': True,
             'visibility': 'all',
@@ -215,7 +244,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'support': {
             'type': 'builtin',
             'builtin_id': 'support',
-            'text': {'ru': '💬 Поддержка', 'en': '💬 Support'},
+            'text': {},
+            'text_key': 'MENU_SUPPORT',
             'action': 'menu_support',
             'enabled': True,
             'visibility': 'all',
@@ -225,7 +255,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'info': {
             'type': 'builtin',
             'builtin_id': 'info',
-            'text': {'ru': 'ℹ️ Инфо', 'en': 'ℹ️ Info'},
+            'text': {},
+            'text_key': 'MENU_INFO',
             'action': 'menu_info',
             'enabled': True,
             'visibility': 'all',
@@ -235,7 +266,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'language': {
             'type': 'builtin',
             'builtin_id': 'language',
-            'text': {'ru': '🌐 Язык', 'en': '🌐 Language'},
+            'text': {},
+            'text_key': 'MENU_LANGUAGE',
             'action': 'menu_language',
             'enabled': True,
             'visibility': 'all',
@@ -245,7 +277,8 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'admin_panel': {
             'type': 'builtin',
             'builtin_id': 'admin_panel',
-            'text': {'ru': '⚙️ Админ панель', 'en': '⚙️ Admin panel'},
+            'text': {},
+            'text_key': 'MENU_ADMIN',
             'action': 'admin_panel',
             'enabled': True,
             'visibility': 'admins',
@@ -255,7 +288,9 @@ DEFAULT_MENU_CONFIG: dict[str, Any] = {
         'moderator_panel': {
             'type': 'builtin',
             'builtin_id': 'moderator_panel',
+            # Ключа локализации нет: легаси-меню хардкодит подпись строкой.
             'text': {'ru': '🧑‍⚖️ Модерация', 'en': '🧑‍⚖️ Moderation'},
+            'text_key': None,
             'action': 'moderator_panel',
             'enabled': True,
             'visibility': 'moderators',

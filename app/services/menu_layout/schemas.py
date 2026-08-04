@@ -89,7 +89,22 @@ class MenuButtonConfig(BaseModel):
 
     type: ButtonType = Field(..., description='Тип кнопки')
     builtin_id: str | None = Field(default=None, description='ID встроенной кнопки (для type=builtin)')
-    text: dict[str, str] = Field(..., description='Локализованные тексты кнопки: {lang_code: text}')
+    text: dict[str, str] = Field(
+        ...,
+        description=(
+            'Явно заданные админом подписи: {lang_code: text}. У кнопки с text_key непустое '
+            'значение перебивает локаль ТОЛЬКО для этого языка; пустое — подпись наследуется '
+            'из локали'
+        ),
+    )
+    text_key: str | None = Field(
+        default=None,
+        max_length=100,
+        description=(
+            'Ключ локализации подписи встроенной кнопки (тот же, что читает текущее меню). '
+            'None у кастомных кнопок и у встроенных без эквивалента в локалях'
+        ),
+    )
     icon: str | None = Field(default=None, max_length=100, description='Эмодзи/иконка кнопки (отдельно от текста)')
     action: str = Field(..., description='callback_data или URL в зависимости от типа')
     enabled: bool = Field(default=True, description='Кнопка активна')

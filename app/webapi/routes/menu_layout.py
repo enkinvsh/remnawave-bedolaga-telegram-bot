@@ -112,6 +112,7 @@ def _serialize_config(config: dict, is_enabled: bool, updated_at) -> MenuLayoutR
                 type=btn_data.get('type', 'builtin'),
                 builtin_id=btn_data.get('builtin_id'),
                 text=btn_data.get('text', {}),
+                text_key=btn_data.get('text_key'),
                 icon=btn_data.get('icon'),
                 action=btn_data.get('action', ''),
                 enabled=btn_data.get('enabled', True),
@@ -172,7 +173,10 @@ async def update_menu_layout(
             btn_dict = btn.model_dump(mode='json')
             # Автоматически определяем наличие плейсхолдеров, если dynamic_text не установлен
             if not btn_dict.get('dynamic_text', False):
-                btn_dict['dynamic_text'] = MenuLayoutService._text_has_placeholders(btn_dict.get('text', {}))
+                btn_dict['dynamic_text'] = MenuLayoutService._text_has_placeholders(
+                    btn_dict.get('text', {}),
+                    btn_dict.get('text_key'),
+                )
             buttons_config[btn_id] = btn_dict
         config['buttons'] = buttons_config
 
@@ -246,6 +250,7 @@ async def update_button(
             type=button['type'],
             builtin_id=button.get('builtin_id'),
             text=button.get('text', {}),
+            text_key=button.get('text_key'),
             icon=button.get('icon'),
             action=button.get('action', ''),
             enabled=button.get('enabled', True),
@@ -353,6 +358,7 @@ async def add_custom_button(
             type=button['type'],
             builtin_id=button.get('builtin_id'),
             text=button.get('text', {}),
+            text_key=button.get('text_key'),
             icon=button.get('icon'),
             action=button.get('action', ''),
             enabled=button.get('enabled', True),
@@ -602,6 +608,7 @@ async def export_menu_layout(
             type=btn_data['type'],
             builtin_id=btn_data.get('builtin_id'),
             text=btn_data.get('text', {}),
+            text_key=btn_data.get('text_key'),
             icon=btn_data.get('icon'),
             action=btn_data.get('action', ''),
             enabled=btn_data.get('enabled', True),
