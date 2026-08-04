@@ -9,7 +9,9 @@ from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database.crud.locale_override import delete_locale_override, upsert_locale_override
 from app.database.models import User
+from app.localization.overrides import load_overrides
 from app.localization.texts import get_texts
 from app.services.support_settings_service import SupportSettingsService
 from app.states import SupportSettingsStates
@@ -172,7 +174,7 @@ def _get_support_settings_keyboard(language: str) -> types.InlineKeyboardMarkup:
 @error_handler
 async def show_support_settings(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     texts = get_texts(db_user.language)
-    desc = SupportSettingsService.get_support_info_text(db_user.language)
+    desc = texts.SUPPORT_INFO
     await callback.message.edit_text(
         texts.t('ADMIN_SUPPORT_SETTINGS_TITLE', '🛟 <b>Настройки поддержки</b>')
         + '\n\n'
@@ -394,7 +396,7 @@ async def set_mode_both(callback: types.CallbackQuery, db_user: User, db: AsyncS
 @error_handler
 async def start_edit_desc(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
     texts = get_texts(db_user.language)
-    current_desc_html = SupportSettingsService.get_support_info_text(db_user.language)
+    current_desc_html = texts.SUPPORT_INFO
     # plain text for display-only code block
     current_desc_plain = re.sub(r'<[^>]+>', '', current_desc_html)
 
@@ -439,8 +441,18 @@ async def start_edit_desc(callback: types.CallbackQuery, db_user: User, db: Asyn
 @error_handler
 async def handle_new_desc(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
     texts = get_texts(db_user.language)
-    new_text = message.html_text or message.text
-    SupportSettingsService.set_support_info_text(db_user.language, new_text)
+    new_text = message.html_text or message.text or ''
+    # Тот же единственный источник, что правит редактор локалей в кабинете:
+    # раньше запись уходила в data/support_settings.json и перебивала override.
+    if new_text.strip():
+        await upsert_locale_override(db, key='SUPPORT_INFO', language=db_user.language, value=new_text)
+    else:
+        # Пустой ввод = сброс к бандловому тексту. Override возвращается дословно,
+        # так что пустая строка дала бы пустой экран поддержки, а кнопки «сбросить»
+        # в боте нет (она только в кабинете) — откатить это было бы нечем.
+        await delete_locale_override(db, key='SUPPORT_INFO', language=db_user.language)
+    await db.commit()
+    await load_overrides(db)
     await state.clear()
     markup = types.InlineKeyboardMarkup(
         inline_keyboard=[
@@ -459,7 +471,7 @@ async def handle_new_desc(message: types.Message, db_user: User, db: AsyncSessio
 async def send_desc_copy(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     # send plain text for easy copying
     texts = get_texts(db_user.language)
-    current_desc_html = SupportSettingsService.get_support_info_text(db_user.language)
+    current_desc_html = texts.SUPPORT_INFO
     current_desc_plain = re.sub(r'<[^>]+>', '', current_desc_html)
     # attach delete button to the sent message
     markup = types.InlineKeyboardMarkup(

@@ -119,28 +119,9 @@ class SupportSettingsService:
     def is_contact_enabled(cls) -> bool:
         return cls.get_system_mode() in {'contact', 'both'}
 
-    # Descriptions (per language)
-    @classmethod
-    def get_support_info_text(cls, language: str) -> str:
-        cls._load()
-        lang = (language or settings.DEFAULT_LANGUAGE).split('-')[0].lower()
-        overrides = cls._data.get('support_info_texts') or {}
-        text = overrides.get(lang)
-        if text and isinstance(text, str) and text.strip():
-            return text
-        # Fallback to dynamic localization default
-        from app.localization.texts import get_texts
-
-        return get_texts(lang).SUPPORT_INFO
-
-    @classmethod
-    def set_support_info_text(cls, language: str, text: str) -> bool:
-        cls._load()
-        lang = (language or settings.DEFAULT_LANGUAGE).split('-')[0].lower()
-        texts_map = cls._data.get('support_info_texts') or {}
-        texts_map[lang] = text or ''
-        cls._data['support_info_texts'] = texts_map
-        return cls._save()
+    # Текст экрана поддержки живёт в locale_overrides (ключ SUPPORT_INFO), а не
+    # здесь: два хранилища расходились, и правка в кабинете не доезжала до юзера.
+    # Перенос старых текстов из support_info_texts — миграция 0104.
 
     # Notifications & SLA
     @classmethod

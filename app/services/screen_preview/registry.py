@@ -269,3 +269,27 @@ register_screen(
         states=SUBSCRIPTION_STATES,
     )
 )
+
+
+SUPPORT_KEYS: tuple[str, ...] = ('SUPPORT_INFO',)
+
+# Текст поддержки не зависит от подписки — предлагать девять состояний значило бы
+# показывать владельцу выбор, который ничего не меняет.
+SUPPORT_STATES: tuple[SyntheticState, ...] = (SyntheticState(DEFAULT_SYNTHETIC_STATE, 'Демо-пользователь'),)
+
+
+async def _render_support(texts: Texts, db: Any, state: str) -> str:
+    """Экран «Поддержка» — та же строка, что уходит в caption хендлера menu_support."""
+    return texts.SUPPORT_INFO
+
+
+register_screen(
+    ScreenDefinition(
+        id='support',
+        title='Поддержка',
+        description='Экран кнопки «Техподдержка»: как связаться с поддержкой и с чем она помогает.',
+        render=_render_support,
+        keys=SUPPORT_KEYS,
+        states=SUPPORT_STATES,
+    )
+)
